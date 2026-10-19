@@ -1,0 +1,29 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Property screening — investor brief</title><link rel="stylesheet" href="assets/style.css"><script src="assets/intake.js" defer></script></head>
+<body><header><div class="header-identity"><a class="brand" href="./"><svg class="brand-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m3 10 9-7 9 7"/><path d="M5 9v12h5v-7h4v7h5V9"/></svg><span>Company name</span></a><span class="tag">England · Long-term rentals</span></div><a class="header-link" href="review" id="review-link">Analyst dashboard →</a></header>
+<main class="intake"><div id="brief-entry"><h1>Property brief</h1>
+<form id="brief-form"><section class="panel"><h2>About you</h2><div class="grid">
+<label>Your name / firm<input name="name" autocomplete="name" required maxlength="150"></label>
+<label>Email (optional)<input name="email" type="email" autocomplete="email" maxlength="250"></label>
+<label>Cash available to invest (£, optional)<input name="cash_budget" type="number" min="0" step="100" placeholder="Including deposit, fees and refurbishment"></label>
+<label>Main goal<select name="goal"><option>Balanced income and risk</option><option>Monthly rental income</option><option>Long-term growth</option><option>Preserve capital</option></select></label>
+<label>Risk tolerance<select name="risk_tolerance"><option value="moderate">Moderate</option><option value="low">Low</option><option value="high">High</option></select></label>
+<label>Expected years of ownership<input name="holding_years" type="number" min="1" max="30" step="1" value="5" required></label>
+</div></section>
+<section class="panel"><h2>The property</h2><div class="grid">
+<label class="wide">Full address<input name="address" placeholder="Flat / house number, street and town" required maxlength="500"></label>
+<label>Postcode<input name="postcode" required placeholder="M1 1AA" maxlength="10"></label>
+<label>Asking price (£)<input name="asking_price" type="number" min="1" max="100000000" step="1" required></label>
+<label>Property type<select name="property_type"><option value="flat">Flat / maisonette</option><option value="terraced_house">Terraced house</option><option value="semi-detached_house">Semi-detached house</option><option value="detached_house">Detached house</option></select></label>
+<label>Bedrooms<input name="bedrooms" type="number" min="0" max="5" step="1" value="2" required></label>
+<label class="wide">Listing URL (optional)<input name="listing_url" type="url" placeholder="https://…" maxlength="2000"></label>
+<label class="wide">Anything else we should know?<textarea name="notes" rows="3" placeholder="Plans, concerns, or anything the agent has told you" maxlength="8000"></textarea></label>
+</div><label class="check"><input name="england" type="checkbox" required>I confirm this property is in England and is being considered for a long-term rental.</label></section>
+<div class="actions"><button type="submit" id="submit-brief">Submit property</button><button type="button" class="secondary" id="export-brief">Download brief as JSON</button></div>
+<div id="message" role="status" aria-live="polite"></div></form></div>
+<section id="brief-success" class="panel submission-success" role="status" aria-live="polite" aria-labelledby="success-title" tabindex="-1" hidden>
+<svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="32" cy="32" r="28"/><path d="m19 32 9 9 17-18"/></svg>
+<h1 id="success-title">Property submitted successfully</h1><p>Your property brief has been received and is being processed.</p>
+</section></main>
+</body></html>

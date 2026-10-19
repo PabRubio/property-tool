@@ -1,0 +1,18 @@
+{
+  "jurisdiction": "England",
+  "effective_from": "2025-04-01",
+  "verified_on": "2026-10-13",
+  "bands": [[125000, 0], [250000, 0.02], [925000, 0.05], [1500000, 0.10], [null, 0.12]],
+  "additional_rate": 0.05,
+  "nonresident_rate": 0.02,
+  "additional_min_price": 40000,
+  "corporate_threshold": 500000,
+  "corporate_flat_rate": 0.17,
+  "sources": [
+    "https://www.gov.uk/stamp-duty-land-tax/residential-property-rates",
+    "https://www.gov.uk/guidance/stamp-duty-land-tax-corporate-bodies",
+    "https://www.gov.uk/guidance/stamp-duty-land-tax-buying-an-additional-residential-property",
+    "https://www.gov.uk/guidance/rates-of-stamp-duty-land-tax-for-non-uk-residents"
+  ],
+  "scope": "Single residential investment purchase in England. No first-time-buyer relief for a property bought solely to let. No mixed use, multiple dwellings, linked transactions, trusts or relief calculation. New lease rent NPV requires a tax override. Company relief must be explicitly confirmed; otherwise the corporate flat rate applies above its threshold. Annual income taxes and disposal taxes require adviser-supplied budgets."
+}

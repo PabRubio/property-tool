@@ -1,0 +1,4 @@
+Flask>=2.0.1,<4
+reportlab>=3.5.34,<5
+Pillow>=7,<12
+
