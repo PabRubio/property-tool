@@ -10,7 +10,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from flask import Flask, request, jsonify, send_from_directory
 from werkzeug.exceptions import HTTPException
-from screening.schema import defaults, validate, FIELDS, string
+from screening.schema import defaults, validate, validate_submission, FIELDS, string
+from screening.evidence import enriched_inputs, clear_profile_inputs, invalidate_size_evidence
 from screening.store import Store, atomic_json
 from screening.providers import gather, now, scrub
 from screening.finance import analyse
@@ -32,14 +33,15 @@ def load_env():
         if not os.getenv(canonical) and os.getenv(alias): os.environ[canonical]=os.environ[alias]
 
 
-def provenance(new, old=None):
+def provenance(new, old=None, supplied=None):
     base=defaults()
     new["input_provenance"]=(old or {}).get("input_provenance",{}).copy()
     for section in ("property","investor","assumptions"):
         for key,value in new[section].items():
             path=section+"."+key
-            if not old or old[section].get(key)!=value:
+            if not old or old.get(section,{}).get(key)!=value:
                 basis="Illustrative default (unverified)" if section=="assumptions" and value==base[section][key] else "User / analyst input"
+                if supplied is not None and key in supplied.get(section, {}): basis="User / analyst input"
                 if value is None or value=="": basis="Not supplied"
                 new["input_provenance"][path]={"basis":basis,"recorded_at":now()}
     return new
@@ -104,6 +106,11 @@ def create_app(data_dir=None):
     @app.route("/review")
     def review_page(): return send_from_directory(str(ROOT/"web"),"review.html")
 
+    @app.route("/terms")
+    @app.route("/privacy")
+    def placeholder_page():
+        return '<!doctype html><html lang="en"><head><meta charset="utf-8"><title></title></head><body></body></html>'
+
     @app.route("/assets/<path:name>")
     def assets(name): return send_from_directory(str(ROOT/"web/assets"),name)
 
@@ -117,7 +124,8 @@ def create_app(data_dir=None):
     def records():
         if request.method=="GET": return jsonify(records=store.listing())
         b=body()
-        inputs=provenance(validate(b.get("inputs",b)))
+        supplied=b.get("inputs",b)
+        inputs=provenance(validate_submission(supplied),supplied=supplied)
         mode="demo" if b.get("mode")=="demo" else "manual"
         r=store.create(inputs,mode)
         return jsonify(r),201
@@ -132,26 +140,36 @@ def create_app(data_dir=None):
                 store.delete(record_id)
                 return jsonify(deleted=record_id)
             new=provenance(validate(b["inputs"]),r["inputs"])
-            query_keys=("address","postcode","property_type","bedrooms","uprn")
-            query_changed=any(new["property"][k]!=r["inputs"]["property"][k] for k in query_keys)
+            query_keys=("address","postcode","property_type","bedrooms","uprn","building_attachment","new_build","tenure")
+            query_changed=any(new["property"].get(k)!=r["inputs"]["property"].get(k,defaults()["property"][k]) for k in query_keys)
             avm_keys=("floor_area_sqm","construction_date","finish_quality","outdoor_space","bathrooms","off_street_parking")
             avm_changed=any(new["property"][k]!=r["inputs"]["property"][k] for k in avm_keys)
             store.invalidate(r,"Inputs changed; approval and outputs invalidated")
             if query_changed:
                 r["evidence"]={}
+                clear_profile_inputs(new,r['inputs'])
                 # Imported selections must be explicitly reviewed for the new subject.
                 for c in new["comparables"]: c["selected"]=False
             elif avm_changed:
-                for endpoint in ("valuation-sale","valuation-rent"):
+                for endpoint in ("valuation-sale","valuation-rent","build-cost"):
                     r["evidence"].get("market",{}).pop(endpoint,None)
                     r["evidence"].get("raw",{}).pop(endpoint,None)
-                r["evidence"]["sources"]=[s for s in r["evidence"].get("sources",[]) if not s["id"].startswith("valuation-")]
-            r["inputs"]=new; store.save(r)
+                r["evidence"]["sources"]=[s for s in r["evidence"].get("sources",[]) if not s["id"].startswith("valuation-") and s['id']!='build-cost']
+            if any(new['assumptions'].get(k)!=r['inputs']['assumptions'].get(k,defaults()['assumptions'][k]) for k in ('refurb_level','refurb_finish')):
+                r['evidence'].get('market',{}).pop('build-cost',None)
+                r['evidence'].get('raw',{}).pop('build-cost',None)
+                r['evidence']['sources']=[s for s in r['evidence'].get('sources',[]) if s['id']!='build-cost']
+            if new['property'].get('floor_area_sqm') != r['inputs']['property'].get('floor_area_sqm'):
+                invalidate_size_evidence(r['evidence'])
+            r["inputs"]=new
+            r['status']='needs_follow_up' if new['enquiry']['kind']=='area' else 'draft'
+            store.save(r)
         return jsonify(r)
 
     def run_job(record_id,kind,b):
         with store.lock:
             r=writable(record_id,b)
+            if r['inputs'].get('enquiry',{}).get('kind')=='area': raise ValueError('Area enquiries are saved for manual follow-up; select a property before generating a report')
             if kind=="gather" and r["mode"]=="demo": raise ValueError("Demo records remain fictional. Create a new brief to use live data.")
             provider=b.get("provider",default_provider())
             if provider not in ("none","anthropic","openai","gemini"): raise ValueError("Unknown AI provider")
@@ -172,7 +190,7 @@ def create_app(data_dir=None):
                         age=(datetime.now(timezone.utc)-datetime.fromisoformat(evidence.get('retrieved_at','').replace('Z','+00:00'))).days
                     except (ValueError,TypeError): age=999
                     pd_ready=bool(os.getenv('PROPERTYDATA_API_KEY'))
-                    needs_pd=pd_ready and not any(s.get('id')=='rents' for s in evidence.get('sources',[]))
+                    needs_pd=pd_ready and (evidence.get('version',0)<3 or not any(s.get('id')=='rents' for s in evidence.get('sources',[])))
                     if not evidence or b.get('refresh_evidence') is True or age>=60 or needs_pd:
                         progress('Researching the property and HM Land Registry records')
                         r['evidence']=gather(r['inputs'],progress,include_profile=b.get('include_profile',True) is True,public_only=not pd_ready)
@@ -183,9 +201,10 @@ def create_app(data_dir=None):
                     message="Evidence gathered. Review sources and select comparables, then calculate."
                 else:
                     progress("Calculating cash flow and checking assumptions")
+                    r['inputs']=enriched_inputs(r['inputs'],r['evidence'])
                     r["analysis"]=analyse(r["inputs"],r["evidence"],r["mode"])
                     if not r["analysis"]["available"]:
-                        r["status"]="needs_input"; message="Add a rent estimate or rental evidence before generating a report."
+                        r["status"]="needs_input"; message="There was an error while generating the report, please try again."
                     else:
                         progress("Drafting analysis" if provider!="none" else "Assembling the report")
                         r["narrative"]=generate(r,provider)
@@ -238,20 +257,30 @@ def create_app(data_dir=None):
                     field=change['section']+'.'+change['key']
                     revised['inputs']['input_provenance'][field]={'basis':'Analyst supplied via AI edit; unverified','recorded_at':now()}
                 revised['presentation']=presentation
-                query_keys=('address','postcode','property_type','bedrooms','uprn')
-                if any(inputs['property'][k]!=original['inputs']['property'][k] for k in query_keys):
+                query_keys=('address','postcode','property_type','bedrooms','uprn','building_attachment','new_build','tenure')
+                if any(inputs['property'].get(k)!=original['inputs']['property'].get(k,defaults()['property'][k]) for k in query_keys):
                     revised['evidence']={}
+                    clear_profile_inputs(revised['inputs'],original['inputs'])
                     for c in revised['inputs']['comparables']:c['selected']=False
                 elif any(inputs['property'][k]!=original['inputs']['property'][k] for k in ('floor_area_sqm','construction_date','finish_quality','outdoor_space','bathrooms','off_street_parking')):
-                    for endpoint in ('valuation-sale','valuation-rent'):
+                    for endpoint in ('valuation-sale','valuation-rent','build-cost'):
                         revised['evidence'].get('market',{}).pop(endpoint,None)
-                    revised['evidence']['sources']=[s for s in revised['evidence'].get('sources',[]) if not s['id'].startswith('valuation-')]
+                        revised['evidence'].get('raw',{}).pop(endpoint,None)
+                    revised['evidence']['sources']=[s for s in revised['evidence'].get('sources',[]) if not s['id'].startswith('valuation-') and s['id']!='build-cost']
+                if any(inputs['assumptions'].get(k)!=original['inputs']['assumptions'].get(k,defaults()['assumptions'][k]) for k in ('refurb_level','refurb_finish')):
+                    revised['evidence'].get('market',{}).pop('build-cost',None)
+                    revised['evidence'].get('raw',{}).pop('build-cost',None)
+                    revised['evidence']['sources']=[s for s in revised['evidence'].get('sources',[]) if s['id']!='build-cost']
                 revised.update(revision=original['revision']+1,approval=None,status='ready_for_review')
-                if changes:revised['analysis']=analyse(revised['inputs'],revised['evidence'],revised['mode'])
-                if not revised['analysis']['available']: raise ValueError('That edit leaves no usable rent for the revised property. Include a monthly rent estimate in the request.')
+                if inputs['property'].get('floor_area_sqm') != original['inputs']['property'].get('floor_area_sqm'):
+                    invalidate_size_evidence(revised['evidence'])
+                revised['inputs']=enriched_inputs(revised['inputs'],revised['evidence'])
+                upgraded=revised['analysis'].get('version') != 3
+                if changes or upgraded or not revised['analysis'].get('horizons'):revised['analysis']=analyse(revised['inputs'],revised['evidence'],revised['mode'])
+                if not revised['analysis']['available']: raise ValueError('That edit leaves missing financial inputs: '+', '.join(revised['analysis'].get('missing',[])))
                 with store.lock:
                     pending=store.load(record_id);pending['job']['message']='Applying your changes and rebuilding the PDF';store.save(pending)
-                if rewrite or changes:revised['narrative']=generate(revised,provider,instructions=instruction,strict=True)
+                if rewrite or changes or upgraded:revised['narrative']=generate(revised,provider,instructions=instruction,strict=True)
                 revised['artifacts']=generate_report(revised,store.folder(record_id))
                 revised.setdefault('edit_history',[]).append({'at':now(),'request':instruction,'message':explanation,'changes':changes,'presentation':presentation,'rewrite_commentary':rewrite,'revision':revised['revision']})
                 revised['job']={'state':'done','kind':'revise','message':'Report updated. '+explanation}
@@ -285,6 +314,7 @@ def create_app(data_dir=None):
         with store.lock:
             r=writable(record_id,b)
             if not r.get("analysis",{}) or not r["analysis"].get("available") or not r.get("narrative"): raise ValueError("Generate and review a draft first")
+            if r['analysis'].get('version') != 3 or not r['analysis'].get('horizons'): raise ValueError('Update the draft before finalizing so you can review the updated evidence and projections. Reapply your photos or request a PDF update.')
             reviewer=string(b.get("reviewer",""),"Reviewer",150)
             if not reviewer or b.get("acknowledged") is not True: raise ValueError("Enter a reviewer name and acknowledge the assumptions, tax exclusions and evidence gaps")
             folder=store.folder(record_id)

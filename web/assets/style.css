@@ -56,7 +56,7 @@ h1{font-size:28px}
 #pdf-preview{display:block;width:100%;height:740px;border:1px solid #d9e1df;background:#e7eeec;margin:18px 0}
 #revision-form{padding-top:12px;border-top:1px solid #d9e1df}
 #revision-result:empty{display:none}
-#quick-rent-form button{margin-top:14px}
+.generation-error{color:#9b2929;font-size:13px;margin:12px 0}
 .workspace main{min-width:0}
 @media(max-width:550px){#pdf-preview{height:520px}}
 .photo-upload-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:22px;margin:18px 0}
@@ -92,3 +92,7 @@ textarea{resize:none}
 .submission-success svg{display:block;width:64px;height:64px;margin:0 auto 24px;color:#176d65}
 .submission-success h1{font-size:clamp(28px,5vw,38px);margin:0 0 14px}
 .submission-success p{font-size:17px;color:#667b7e;margin:0}
+fieldset{border:0;margin:0;padding:0;min-width:0}
+fieldset .grid{margin-top:16px}
+summary{cursor:pointer;font-weight:600;margin:16px 0}
+.contact-detail{white-space:pre-wrap;overflow-wrap:anywhere}

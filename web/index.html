@@ -1,27 +1,74 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Property screening — investor brief</title><link rel="stylesheet" href="assets/style.css"><script src="assets/intake.js" defer></script></head>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Client property form</title><link rel="stylesheet" href="assets/style.css"><script src="assets/intake.js" defer></script></head>
 <body><header><div class="header-identity"><a class="brand" href="./"><svg class="brand-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m3 10 9-7 9 7"/><path d="M5 9v12h5v-7h4v7h5V9"/></svg><span>Company name</span></a><span class="tag">England · Long-term rentals</span></div><a class="header-link" href="review" id="review-link">Analyst dashboard →</a></header>
 <main class="intake"><div id="brief-entry"><h1>Property brief</h1>
-<form id="brief-form"><section class="panel"><h2>About you</h2><div class="grid">
+<form id="brief-form">
+<section class="panel"><h2>About you</h2><div class="grid">
 <label>Your name / firm<input name="name" autocomplete="name" required maxlength="150"></label>
-<label>Email (optional)<input name="email" type="email" autocomplete="email" maxlength="250"></label>
-<label>Cash available to invest (£, optional)<input name="cash_budget" type="number" min="0" step="100" placeholder="Including deposit, fees and refurbishment"></label>
-<label>Main goal<select name="goal"><option>Balanced income and risk</option><option>Monthly rental income</option><option>Long-term growth</option><option>Preserve capital</option></select></label>
-<label>Risk tolerance<select name="risk_tolerance"><option value="moderate">Moderate</option><option value="low">Low</option><option value="high">High</option></select></label>
-<label>Expected years of ownership<input name="holding_years" type="number" min="1" max="30" step="1" value="5" required></label>
+<label>Contact email<input name="email" type="email" autocomplete="email" required maxlength="254"></label>
+<label class="wide">Main goal<textarea name="goal" rows="2" maxlength="500" required placeholder="What would you like this research to help you decide?"></textarea></label>
+<label>Purpose of screening<select name="purpose"><option value="buy">Considering a purchase</option><option value="viewing">Deciding whether to arrange a viewing</option><option value="comparison">Comparing investments</option><option value="client">Research for a client</option></select></label>
+<label>Cash available to invest (£, optional)<input name="cash_budget" type="number" min="0" step="1" placeholder="Deposit, fees, works and reserves"></label>
 </div></section>
-<section class="panel"><h2>The property</h2><div class="grid">
+<section class="panel"><h2>Your enquiry</h2>
+<label class="check"><input name="area_only" type="checkbox">I don't have a specific property yet; I have an area and budget in mind.</label>
+<fieldset id="area-fields" hidden disabled><div class="grid">
+<label>Area of interest<input name="area" maxlength="500" required placeholder="Town, neighbourhood or postcode area"></label>
+<label>Property purchase budget (£)<input name="budget" type="number" min="1" max="100000000" required step="1"></label>
+</div><p class="muted">We will contact you to discuss your search.</p></fieldset>
+<fieldset id="property-fields"><div class="grid">
 <label class="wide">Full address<input name="address" placeholder="Flat / house number, street and town" required maxlength="500"></label>
 <label>Postcode<input name="postcode" required placeholder="M1 1AA" maxlength="10"></label>
-<label>Asking price (£)<input name="asking_price" type="number" min="1" max="100000000" step="1" required></label>
-<label>Property type<select name="property_type"><option value="flat">Flat / maisonette</option><option value="terraced_house">Terraced house</option><option value="semi-detached_house">Semi-detached house</option><option value="detached_house">Detached house</option></select></label>
-<label>Bedrooms<input name="bedrooms" type="number" min="0" max="5" step="1" value="2" required></label>
+<label>Price status<select name="price_status" id="price-status"><option value="listed">Listed for sale</option><option value="under_offer">Under offer</option><option value="proposed">I have a proposed purchase price</option><option value="unknown">No price known</option></select></label>
+<label id="price-field">Listing / offer / proposed price (£)<input name="asking_price" type="number" min="1" max="100000000" step="1" required></label>
+<label>Property type<select name="property_type" id="property-type"><option value="flat">Flat / maisonette</option><option value="converted_flat">Converted flat</option><option value="studio">Studio</option><option value="terraced_house">Terraced house</option><option value="semi-detached_house">Semi-detached house</option><option value="detached_house">Detached house</option><option value="bungalow">Bungalow</option></select></label>
+<label id="attachment-field" hidden>Bungalow layout<select name="building_attachment" disabled required><option value="">Choose…</option><option value="detached_house">Detached</option><option value="semi-detached_house">Semi-detached</option><option value="terraced_house">Terraced</option></select></label>
+<label>Bedrooms<input name="bedrooms" type="number" min="0" max="5" step="1" required></label>
+<label>Bathrooms<input name="bathrooms" type="number" min="0" max="5" step="1" required></label>
+<label>Internal floor area (m²)<input name="floor_area_sqm" type="number" min="1" max="10000" step="0.01" required placeholder="Usually on the floorplan or EPC"></label>
+<label>Approximate construction age<select name="construction_date" required><option value="">Choose…</option><option value="pre_1914">Before 1914</option><option value="1914_2000">1914–1999</option><option value="2000_onwards">2000 onwards</option></select></label>
+<label>Interior condition<select name="finish_quality" required><option value="">Choose…</option><option value="very_high">Luxury finish</option><option value="high">High standard</option><option value="average">Average / good condition</option><option value="below_average">Needs updating</option><option value="unmodernised">Needs substantial renovation</option></select></label>
+<label>Outdoor space<select name="outdoor_space" required><option value="">Choose…</option><option value="none">None</option><option value="balcony_terrace">Balcony / terrace</option><option value="garden">Garden</option><option value="garden_very_large">Very large garden</option></select></label>
+<label>Off-street parking spaces<select name="off_street_parking" required><option value="">Choose…</option><option value="0">None</option><option value="1">1</option><option value="2">2</option><option value="3">3 or more</option></select></label>
+<label>Ownership type<select name="tenure"><option value="unknown">Not known</option><option value="freehold">Freehold</option><option value="leasehold">Leasehold</option></select></label>
+<label class="check"><input name="new_build" type="checkbox">New build</label>
 <label class="wide">Listing URL (optional)<input name="listing_url" type="url" placeholder="https://…" maxlength="2000"></label>
-<label class="wide">Anything else we should know?<textarea name="notes" rows="3" placeholder="Plans, concerns, or anything the agent has told you" maxlength="8000"></textarea></label>
-</div><label class="check"><input name="england" type="checkbox" required>I confirm this property is in England and is being considered for a long-term rental.</label></section>
+</div></fieldset></section>
+<fieldset id="investment-fields"><section class="panel"><h2>Purchase and financing</h2><div class="grid">
+<label>Buying as<select name="buyer_type" required><option value="">Choose…</option><option value="individual">Individual</option><option value="company">Company</option></select></label>
+<label>Do you or any joint buyers own other residential property anywhere in the world?<select name="additional_property" required><option value="">Choose…</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+<label>Are all buyers UK resident for stamp duty purposes?<select name="uk_resident" required><option value="">Choose…</option><option value="yes">Yes</option><option value="no">No / not all buyers</option></select></label>
+<label>Financing<select name="financing" id="financing" required><option value="">Choose…</option><option value="cash">Cash purchase</option><option value="interest_only">Interest-only mortgage</option><option value="repayment">Repayment mortgage</option></select></label>
+</div><fieldset id="mortgage-fields" disabled hidden><div class="grid">
+<label>Expected mortgage amount (£)<input name="mortgage_amount" type="number" min="1" max="100000000" step="1" required></label>
+<label>Annual mortgage interest rate (%)<input name="interest_rate_pct" type="number" min="0" max="30" step="0.01" required></label>
+<label>Mortgage term (years)<input name="mortgage_term_years" type="number" min="1" max="40" step="1" required></label>
+</div></fieldset></section>
+<section class="panel"><h2>Works and targets</h2><div class="grid">
+<label>Are you planning refurbishment?<select name="refurbishment_planned"><option value="no">No</option><option value="yes">Yes</option></select></label>
+<label id="refurb-budget-field" hidden>Refurbishment budget (£, if known)<input name="refurbishment" type="number" min="0" max="10000000" step="1" disabled></label>
+<label>Refurbishment estimate to include<select name="refurb_level"><option value="refurb_light">Light refurbishment</option><option value="refurb_moderate">Moderate refurbishment</option><option value="refurb_heavy">Heavy refurbishment</option></select></label>
+<label>Finish for that estimate<select name="refurb_finish"><option value="medium">Standard</option><option value="basic">Basic</option><option value="premium">Premium</option></select></label>
+<label>Target net rental yield (%, optional)<input name="min_net_yield_pct" type="number" min="0" max="100" step="0.1" placeholder="After running costs, before mortgage and tax"></label>
+<label>Target monthly cash flow (£, optional)<input name="min_monthly_cashflow" type="number" min="-100000" max="1000000" step="1" placeholder="After mortgage payments, before income tax"></label>
+</div><p class="muted">The report compares owning and renting the property for 3, 5 and 10 years. A refurbishment estimate is included for reference; it is included in the investment costs only when works are planned.</p>
+<details><summary>Known costs and rental information (optional)</summary><div class="grid">
+<label>Expected monthly rent (£)<input name="monthly_rent" type="number" min="1" max="1000000" step="1"></label>
+<label>Basis of rent estimate<input name="rent_source" maxlength="1000" placeholder="For example, a letting agent's estimate"></label>
+<label>Legal purchase fees (£)<input name="legal_fees" type="number" min="0" max="1000000" step="1"></label>
+<label>Survey fees (£)<input name="survey_fees" type="number" min="0" max="100000" step="1"></label>
+<label>Annual service / estate charge (£)<input name="service_charge" type="number" min="0" max="1000000" step="1"></label>
+<label>Annual ground rent (£)<input name="ground_rent" type="number" min="0" max="1000000" step="1"></label>
+<label>Remaining lease (years)<input name="lease_years" type="number" min="0" max="999" step="1"></label>
+</div></details></section></fieldset>
+<section class="panel"><label>Anything else we should know?<textarea name="notes" rows="3" placeholder="Plans, concerns, or information from the agent" maxlength="8000"></textarea></label>
+<label class="check"><input name="england" type="checkbox" required>I confirm the property or area is in England and the enquiry concerns a long-term rental investment.</label>
+<label class="check"><input name="terms_accepted" type="checkbox" required><span>I agree to the <a href="/terms" target="_blank" rel="noopener">terms</a>: research and information only, not financial, tax or legal advice. <a href="/privacy" target="_blank" rel="noopener">Privacy notice</a>.</span></label>
+<label class="check"><input name="follow_up_contact" type="checkbox">We may contact you to arrange a short feedback call about the free trial or to ask for a testimonial.</label>
+</section><p id="brief-error" class="generation-error" role="alert" hidden></p>
 <div class="actions"><button type="submit" id="submit-brief">Submit property</button><button type="button" class="secondary" id="export-brief">Download brief as JSON</button></div>
-<div id="message" role="status" aria-live="polite"></div></form></div>
+</form></div>
 <section id="brief-success" class="panel submission-success" role="status" aria-live="polite" aria-labelledby="success-title" tabindex="-1" hidden>
 <svg xmlns="http://www.w3.org/2000/svg" width="64" height="64" viewBox="0 0 64 64" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><circle cx="32" cy="32" r="28"/><path d="m19 32 9 9 17-18"/></svg>
 <h1 id="success-title">Property submitted successfully</h1><p>Your property brief has been received and is being processed.</p>

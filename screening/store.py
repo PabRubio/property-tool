@@ -47,9 +47,13 @@ class Store:
             atomic_json(self.folder(record["id"]) / "record.json", record)
 
     def create(self, inputs, mode="manual", evidence=None):
+        enquiry = inputs.get('enquiry', {})
         record = {"id": uuid.uuid4().hex, "created_at": now(), "updated_at": now(), "revision": 1,
-                  "mode": mode, "status": "draft", "inputs": inputs, "evidence": evidence or {},
+                  "mode": mode, "status": "needs_follow_up" if enquiry.get('kind')=='area' else "draft", "inputs": inputs, "evidence": evidence or {},
                   "analysis": None, "narrative": None, "approval": None, "photos": [], "artifacts": {}, "audit": []}
+        record['consent'] = {'recorded_at': now(), 'terms_accepted': enquiry.get('terms_accepted', False),
+                             'terms_url': '/terms', 'privacy_url': '/privacy', 'wording_version': '2026-10-23',
+                             'feedback_call': enquiry.get('feedback_call', False), 'testimonial_contact': enquiry.get('testimonial_contact', False)}
         self.save(record, "Brief created")
         return record
 
@@ -61,7 +65,7 @@ class Store:
         # Keep snapshots for audit; only current revision downloads are exposed.
         atomic_json(self.folder(record["id"]) / "history" / ("revision-%s.json" % record["revision"]), record)
         record["revision"] += 1
-        record.update(analysis=None, narrative=None, approval=None, artifacts={}, status="draft")
+        record.update(analysis=None, narrative=None, approval=None, artifacts={}, status="needs_follow_up" if record['inputs'].get('enquiry',{}).get('kind')=='area' else "draft")
         record.pop("job", None)
         self.save(record, reason)
 
@@ -73,6 +77,8 @@ class Store:
                     r = json.loads(path.read_text())
                     item = {k:r[k] for k in ("id", "updated_at", "status", "mode", "revision")}
                     item.update(address=r["inputs"]["property"]["address"], postcode=r["inputs"]["property"]["postcode"], investor=r["inputs"]["investor"]["name"])
+                    if r['inputs'].get('enquiry',{}).get('kind')=='area':
+                        item.update(address=r['inputs']['enquiry']['area'], postcode='Area enquiry')
                     results.append(item)
                 except (ValueError, KeyError):
                     continue

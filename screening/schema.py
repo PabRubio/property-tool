@@ -8,7 +8,8 @@ from urllib.parse import urlsplit
 FIELDS = [
     ("purchase_price", "Agreed / proposed purchase price (£)", "Acquisition", None, 1, 100000000),
     ("monthly_rent", "Selected monthly rent (£)", "Rent & running costs", None, 1, 1000000),
-    ("refurbishment", "Refurbishment budget (£)", "Acquisition", 0, 0, 10000000),
+    ("refurbishment", "Refurbishment budget (£)", "Acquisition", None, 0, 10000000),
+    ("mortgage_amount", "Expected mortgage amount (£)", "Finance", None, 0, 100000000),
     ("contingency_pct", "Refurbishment contingency (%)", "Acquisition", 10, 0, 100),
     ("legal_fees", "Legal costs including VAT (£)", "Acquisition", 2000, 0, 1000000),
     ("survey_fees", "Survey costs (£)", "Acquisition", 600, 0, 100000),
@@ -33,9 +34,9 @@ FIELDS = [
     ("annual_tax_budget", "Adviser-supplied annual income tax (£; optional)", "Tax & exit", None, 0, 10000000),
     ("sale_tax_budget", "Adviser-supplied tax on sale (£; optional)", "Tax & exit", None, 0, 10000000),
     ("holding_years", "Holding period (years)", "Tax & exit", 5, 1, 30),
-    ("rent_growth_pct", "Assumed annual rent change (%)", "Tax & exit", 0, -20, 20),
+    ("rent_growth_pct", "Assumed annual rent change (%)", "Tax & exit", None, -20, 20),
     ("cost_growth_pct", "Assumed annual cost change (%)", "Tax & exit", 2, -20, 30),
-    ("price_growth_pct", "Assumed annual property price change (%)", "Tax & exit", 0, -20, 20),
+    ("price_growth_pct", "Assumed annual property price change (%)", "Tax & exit", None, -20, 20),
     ("selling_fee_pct", "Selling agent fee incl. VAT (%)", "Tax & exit", 1.5, 0, 20),
     ("sale_legal_fees", "Legal fees on sale (£)", "Tax & exit", 1500, 0, 1000000),
     ("early_repayment_fee", "Mortgage early repayment charge on sale (£)", "Tax & exit", 0, 0, 1000000),
@@ -46,19 +47,28 @@ FIELDS = [
     ("cost_stress_pct", "Stress scenario: running-cost increase (%)", "Screening targets", 20, 0, 200),
 ]
 INT_FIELDS = {"mortgage_term_years", "initial_void_months", "holding_years"}
-PROPERTY_TYPES = ["flat", "terraced_house", "semi-detached_house", "detached_house"]
+PROPERTY_TYPES = ["flat", "converted_flat", "studio", "terraced_house", "semi-detached_house", "detached_house", "bungalow"]
+
+
+def api_property_type(p):
+    if p['property_type'] in ('converted_flat', 'studio'): return 'flat'
+    if p['property_type'] == 'bungalow': return p.get('building_attachment', '')
+    return p['property_type']
 
 
 def defaults():
-    return {"investor": {"name": "", "email": "", "cash_budget": None, "goal": "Balanced income and risk", "risk_tolerance": "moderate", "notes": ""},
+    return {"enquiry": {"kind": "property", "area": "", "budget": None, "purpose": "buy", "terms_accepted": False, "feedback_call": False, "testimonial_contact": False},
+            "investor": {"name": "", "email": "", "cash_budget": None, "goal": "", "risk_tolerance": "moderate", "notes": ""},
             "property": {"address": "", "postcode": "", "country": "England", "asking_price": None,
                          "listing_url": "", "listing_checked": "", "property_type": "flat",
                          "bedrooms": 2, "floor_area_sqm": None, "tenure": "unknown", "lease_years": None,
                          "epc_rating": "unknown", "cladding_status": "unknown", "listing_notes": "", "uprn": "",
-                         "construction_date": "", "finish_quality": "", "outdoor_space": "", "bathrooms": None, "off_street_parking": None},
-            "assumptions": dict({f[0]: f[3] for f in FIELDS}, financing="interest_only", buyer_type="individual",
+                         "construction_date": "", "finish_quality": "", "outdoor_space": "", "bathrooms": None, "off_street_parking": None,
+                         "building_attachment": "", "new_build": False, "price_status": "unknown"},
+            "assumptions": dict({f[0]: f[3] for f in FIELDS}, financing="unknown", buyer_type="individual",
                                 additional_property=True, nonresident=False, corporate_relief_confirmed=False,
-                                new_lease=False, rent_source="", cost_source="", finance_source="", tax_source=""),
+                                new_lease=False, rent_source="", cost_source="", finance_source="", tax_source="",
+                                refurbishment_planned=False, refurb_level="refurb_light", refurb_finish="medium"),
             "comparables": [], "analyst_notes": "", "input_provenance": {}}
 
 
@@ -107,7 +117,7 @@ def validate(payload):
     if not isinstance(payload, dict):
         raise ValueError("Expected a JSON object")
     out = defaults()
-    for group in ("investor", "property", "assumptions"):
+    for group in ("investor", "property", "assumptions", "enquiry"):
         obj = payload.get(group, {})
         if not isinstance(obj, dict):
             raise ValueError(group + " must be an object")
@@ -115,11 +125,25 @@ def validate(payload):
             if key in obj:
                 out[group][key] = obj[key]
     i, p, a = out["investor"], out["property"], out["assumptions"]
+    e = out['enquiry']
+    if e['kind'] not in ('property', 'area') or e['purpose'] not in ('buy', 'viewing', 'comparison', 'client'):
+        raise ValueError('Invalid enquiry type or purpose')
+    e['area'] = string(e['area'], 'Area', 500)
+    e['budget'] = number(e['budget'], 'Purchase budget', 1)
+    for key in ('terms_accepted', 'feedback_call', 'testimonial_contact'):
+        if not isinstance(e[key], bool): raise ValueError('Invalid consent choice')
     for key,limit in (("name",150),("email",254),("goal",500),("risk_tolerance",20),("notes",8000)):
         i[key] = string(i[key], key,limit)
     if i["risk_tolerance"] not in ("low","moderate","high"):
         raise ValueError("Invalid risk tolerance")
     i["cash_budget"] = number(i["cash_budget"], "Available cash")
+    if e['kind'] == 'area':
+        if not e['area'] or e['budget'] is None: raise ValueError('Area and purchase budget are required')
+        # An area enquiry is a contact request, never a synthetic property.
+        out['property'] = defaults()['property']
+        out['assumptions'] = defaults()['assumptions']
+        out['analyst_notes'] = string(payload.get('analyst_notes', ''), 'Analyst notes')
+        return out
     for key in ("address", "postcode", "country", "property_type", "tenure", "epc_rating", "cladding_status", "listing_notes", "uprn", "construction_date", "finish_quality", "outdoor_space"):
         p[key] = string(p[key], key)
     if not p["address"]:
@@ -140,7 +164,13 @@ def validate(payload):
         raise ValueError("Invalid building safety status")
     p["listing_url"] = url(p["listing_url"])
     p["listing_checked"] = iso_date(p["listing_checked"], "Listing checked date")
-    p["asking_price"] = number(p["asking_price"], "Asking price", 1, optional=False)
+    p["asking_price"] = number(p["asking_price"], "Listing / offer price", 1)
+    if p['price_status'] not in ('unknown', 'listed', 'under_offer', 'proposed'): raise ValueError('Invalid price status')
+    if p['price_status'] != 'unknown' and p['asking_price'] is None: raise ValueError('Enter the listing or offer price')
+    if not isinstance(p['new_build'], bool): raise ValueError('New build must be true or false')
+    if p['building_attachment'] not in ('', 'detached_house', 'semi-detached_house', 'terraced_house'): raise ValueError('Invalid building attachment')
+    if p['property_type'] == 'bungalow' and not p['building_attachment']: raise ValueError('Choose whether the bungalow is detached, semi-detached or terraced')
+    if p['property_type'] == 'studio': p['bedrooms'] = 0
     p["floor_area_sqm"] = number(p["floor_area_sqm"], "Floor area", 1, 10000)
     p["lease_years"] = number(p["lease_years"], "Lease years", 0, 999)
     p["bedrooms"] = number(p["bedrooms"], "Bedrooms", 0, 5, False)
@@ -151,6 +181,7 @@ def validate(payload):
         p[key] = number(p[key], key, 0, maximum)
         if p[key] is not None and p[key] % 1:
             raise ValueError(key + " must be a whole number")
+        if p[key] is not None: p[key] = int(p[key])
     for key, choices in (("construction_date", ["", "pre_1914", "1914_2000", "2000_onwards"]), ("finish_quality", ["", "very_high", "high", "average", "below_average", "unmodernised"]), ("outdoor_space", ["", "none", "balcony_terrace", "garden", "garden_very_large"])):
         if p[key] not in choices:
             raise ValueError("Invalid " + key)
@@ -162,21 +193,20 @@ def validate(payload):
             if a[key] % 1:
                 raise ValueError(label + " must be a whole number")
             a[key] = int(a[key])
-    for key in ("additional_property", "nonresident", "corporate_relief_confirmed", "new_lease"):
+    for key in ("additional_property", "nonresident", "corporate_relief_confirmed", "new_lease", "refurbishment_planned"):
         if not isinstance(a[key], bool):
             raise ValueError(key + " must be true or false")
     for key in ("rent_source", "cost_source", "finance_source", "tax_source"):
         a[key] = string(a[key], key)
-    if a["financing"] not in ("cash", "interest_only", "repayment") or a["buyer_type"] not in ("individual", "company"):
+    if a['refurb_level'] not in ('refurb_light', 'refurb_moderate', 'refurb_heavy') or a['refurb_finish'] not in ('basic', 'medium', 'premium'): raise ValueError('Invalid refurbishment reference')
+    if a["financing"] not in ("unknown", "cash", "interest_only", "repayment") or a["buyer_type"] not in ("individual", "company"):
         raise ValueError("Invalid finance or buyer type")
-    if a["holding_years"] > a["mortgage_term_years"] and a["financing"] == "interest_only":
-        raise ValueError("Holding period cannot exceed the interest-only mortgage term; model refinancing separately")
     comps = payload.get("comparables", [])
     if not isinstance(comps, list) or len(comps) > 100:
         raise ValueError("Provide at most 100 comparables")
     for c in comps:
-        if not isinstance(c, dict) or c.get("kind") not in ("sold", "rent"):
-            raise ValueError("Each comparable needs kind sold or rent")
+        if not isinstance(c, dict) or c.get("kind") not in ("sold", "rent", "asking"):
+            raise ValueError("Each comparable needs kind sold, rent or asking")
         row = {"kind": c["kind"], "address": string(c.get("address", ""), "Comparable address", 500),
                "amount": number(c.get("amount"), "Comparable price / monthly rent", 1, optional=False),
                "date": iso_date(c.get("date", ""), "Comparable date"), "source_url": url(c.get("source_url", "")),
@@ -189,4 +219,27 @@ def validate(payload):
             raise ValueError("Comparables need an address and selected true/false")
         out["comparables"].append(row)
     out["analyst_notes"] = string(payload.get("analyst_notes", ""), "Analyst notes")
+    return out
+
+
+def validate_submission(payload):
+    """Stricter requirements for new client briefs; legacy saved records remain readable."""
+    out = validate(payload)
+    e, i, p, a = (out[k] for k in ('enquiry', 'investor', 'property', 'assumptions'))
+    if not i['name'] or not i['email'] or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', i['email']):
+        raise ValueError('Enter your name and a valid contact email')
+    if not e['terms_accepted']: raise ValueError('Please accept the terms before submitting')
+    if not i['goal']: raise ValueError('Describe your main goal')
+    if e['kind'] == 'area': return out
+    for key in ('construction_date', 'finish_quality', 'outdoor_space', 'floor_area_sqm', 'bathrooms', 'off_street_parking'):
+        if p[key] is None or p[key] == '': raise ValueError('Please complete the property details: ' + key.replace('_', ' '))
+    if a['financing'] == 'unknown': raise ValueError('Choose cash or mortgage financing')
+    supplied = payload.get('assumptions', {})
+    for key in ('buyer_type', 'additional_property', 'nonresident'):
+        if key not in supplied: raise ValueError('Complete the buyer details')
+    if a['financing'] != 'cash':
+        if not a['mortgage_amount'] or 'interest_rate_pct' not in supplied or 'mortgage_term_years' not in supplied:
+            raise ValueError('Enter the mortgage amount, annual interest rate and term')
+        price = a['purchase_price'] or p['asking_price']
+        if price and a['mortgage_amount'] >= price: raise ValueError('Mortgage amount must be less than the purchase price')
     return out

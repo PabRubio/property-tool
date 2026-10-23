@@ -1,6 +1,6 @@
 # Property screening
 
-Screen one property in England for a long-term rental investment. A local Python server gathers property evidence, calculates returns and generates a ten-page PDF for analyst review. The frontend uses plain HTML, CSS and JavaScript. Records are stored as JSON files; there is no database or automatic email delivery.
+Screen one property in England for a long-term rental investment, or save an area-and-budget enquiry for manual follow-up. A local Python server gathers property evidence, calculates returns and generates a ten-page PDF for analyst review. The frontend uses plain HTML, CSS and JavaScript. Records are stored as JSON files; there is no database or automatic email delivery.
 
 ## Run locally
 
@@ -44,11 +44,13 @@ Keys stay in the backend. AI requests include property information, financial as
 
 ## Workflow
 
-1. Submit the client property brief. A confirmation replaces the form, and refreshing opens a fresh form. The submission appears automatically in the analyst dashboard.
-2. Select the submission, optionally add information for the AI, then click **Generate report**. This starts evidence gathering, calculations and PDF generation. If no usable rent is available, enter an estimate when prompted.
+1. Submit the client property brief with property details, buyer circumstances and cash or expected mortgage terms. A confirmation replaces the form, and refreshing opens a fresh form. The submission appears automatically in the analyst dashboard.
+2. Select the submission, optionally add information for the AI, then click **Generate report**. This starts evidence gathering, calculations and PDF generation. If no usable rent is available, a red error appears above **Generate report**. Check the property details and PropertyData connection, then retry; this refreshes the research.
 3. Review the PDF. Use **Tell the AI what to change** and **Update PDF** for titles, wording, presentation, property facts or financial assumptions. Changes to financial inputs recalculate the results.
 4. Upload one **Cover photo** and up to ten **House photos**, then click **Add photos to PDF**. Uploads accept JPEG, PNG or WebP, up to 10 MB per image. Photo updates rebuild the existing PDF without calling PropertyData or starting the research pipeline.
 5. Click **Approve & finalize** when satisfied. This requires a saved cover photo, saved photo changes and no pending AI instructions. Finalization records the review and downloads the PDF. Later edits reset approval. Send the finished report to the client yourself.
+
+An area-only enquiry asks for an area and purchase budget, saves the contact details and goal, and appears as **Needs follow-up**. It does not search for properties, generate a PDF or spend API credits. One optional checkbox permits contact about a feedback call or a testimonial request; it saves both contact preferences separately from the required terms acceptance. This form remains for England long-term rental investments; a separate homebuyer form is deferred. The `/terms` and `/privacy` links deliberately open blank placeholder pages. No testimonial publication permission is inferred.
 
 The dashboard reopens the last submission viewed in that browser. The bin icon on a submission deletes its JSON, photos, PDFs and history; deletion is disabled while processing. **Export JSON** downloads the full saved record, including inputs, evidence, calculations, report edits and approval information.
 
@@ -57,12 +59,12 @@ The dashboard reopens the last submission viewed in that browser. The bin icon o
 The PDF contains ten pages:
 
 1. Cover photo, asking or proposed purchase price, acquisition costs and screening result.
-2. Gross yield, net yield, cash-on-cash and a separate capital-growth scenario chart.
+2. Gross yield, net yield, cash-on-cash and sale/rent valuations, growth assumptions and future-value scenarios.
 3. Investment calculation spreadsheet image and acquisition/financing breakdown.
 4. Cash-flow spreadsheet image and annual projections.
-5. Downside scenarios and exit results.
+5. Downside scenarios, including 90% occupancy, and buying, renting and selling after 3, 5 and 10 years.
 6. Property facts, rooms and the additional photo gallery.
-7. Property sale history and historical England house-price context.
+7. Matched property sale history and local historical price context.
 8. Comparable properties with dates and source links.
 9. Written investment case, qualifications and risks.
 10. Assumptions, due-diligence steps and the source register.
@@ -71,20 +73,38 @@ Long evidence lists and projections are condensed in the PDF. The full record re
 
 ## Evidence and calculations
 
-PropertyData supplies area rents, sold-price statistics, asking prices per square foot, growth, demand and a property profile. Optional sale and rental valuations run only when their required property details are available. The app also queries HM Land Registry for transaction evidence and the UK House Price Index for historical England context. A listing URL is retained as a reference; the app does not scrape property portals or download their photographs.
+New property briefs require the details needed to request sale and rent valuations: property type, bedrooms, floor area, construction age, condition, bathrooms, outdoor space and parking. Studios and converted flats use the flat model; bungalows use their detached/semi-detached/terraced attachment. The report flags these broader categories. New-build and confirmed tenure information filter the recorded-sale requests. The property profile runs first and can fill missing size, age, EPC and tenure only when the identity matches. It never overwrites client-supplied facts. House aliases and town formatting differences are accepted only with matching postcode, numbered street and no ambiguous flat/unit identifiers.
 
-Research snapshots are reused and refreshed after sixty days, or when explicitly requested through the backend. The model flags evidence older than thirty days. Paid requests are not automatically retried. Missing or failed sources remain recorded as evidence gaps.
+A complete successful fresh research run budgets **32 PropertyData credits**:
 
-Rental evidence is selected in this order: an explicit rent assumption, selected rental comparables, then the available area baseline. Candidate comparables are not automatically treated as analyst-verified matches. Area statistics and automated valuations are cross-checks, not proof of a property's achievable rent or value. Subject sale history requires a matching property identity.
+| Request | Credits |
+| --- | ---: |
+| `property` | 20 |
+| `rents`, `sold-prices`, `prices-per-sqf`, `growth`, `demand` | 5 |
+| `valuation-sale`, `valuation-rent` | 2 |
+| `demand-rent`, `sold-prices-per-sqf`, `build-cost` | 3 |
+| `national-data` (regional rent inflation), `growth-psf` | 2 |
+| **Standard total** | **32** |
+
+Conditional requests each budget one additional credit: `prices` when fewer than three type/bedroom/size-compatible asking-price candidates are available; `planning-applications` when refurbishment is planned (ten results, within 0.25 miles, last three years, no decision filter); `floor-areas` and `energy-efficiency` only for gaps remaining after the profile; and `title` only for missing lease years with a single matched leasehold title. At most five such requests are added, so the budget is 32–37 credits where all standard requests are eligible. Calls are paced to the lowest documented rate limit of twelve per thirty seconds. There is no area-yields request or extra address-match request. The saved evidence lists the requests attempted and their budgeted credits; this is not an account billing receipt. Actual provider billing can be lower for incomplete/no-match responses. Refurbishment is requested whether or not works are planned, when a valid floor area is available. Provider limits still apply: the documented minimum area is 300 sqft for valuations and 600 sqft for refurbishment. Inputs below those limits are not inflated to force a result. Missing or failed estimates are marked unavailable. A refurbishment reference is added to investment costs only when works are planned and no explicit budget was supplied; an explicit budget takes precedence, and contingency is shown separately. The estimate is not a contractor quote or a predicted value uplift.
+
+The app also queries HM Land Registry for transactions and the England House Price Index as background evidence, without PropertyData credits. The report's historical chart uses the local growth series. Listing links remain references; the app does not scrape portals or download their photographs.
+
+Research snapshots are reused and refreshed after sixty days, or when explicitly requested through the backend. When an API key is configured, the next Generate report action upgrades an older research snapshot with a fresh run of the new requests. Photo changes and AI edits do not perform this research upgrade. Evidence older than thirty days is flagged. Paid requests are not automatically retried. Photo changes, approval and report edits reuse the saved evidence; they do not trigger paid research. Changes to property identity invalidate evidence, and changes to valuation inputs or refurbishment specification discard the affected estimates rather than reuse stale results. Previously generated files remain intact until an explicit update; old models can be upgraded locally from saved evidence when a draft is rebuilt.
+
+Monthly rent is selected in this order: explicit supplied rent, analyst-selected rental comparables, property-specific rental valuation, then a clearly provisional area average. Rental valuations with unknown units are withheld instead of guessing weekly versus monthly. Candidate comparables are ranked by available type, bedroom, size and distance information, and are not silently treated as analyst-verified matches. Property sale history requires matching identity. Asking-price and sold-price-per-square-foot requests use a floor-area band of 75–125% of the known subject area; the actual returned radius remains visible because searches can widen. Individual asking and sold comparisons are retained separately, with observed dates, dimensions, distance, listing age and links where supplied. Rental sample counts, radius and the middle 80% range describe the local sample, not a property valuation confidence interval. Sales/rental demand metrics remain area context and are not converted into vacancy assumptions. Matched council tax and environmental/designation facts are reported with their limits; nearby listed buildings do not establish the subject’s listed status. Council tax is not added again to operating costs, which already include an empty-period bills budget. Planning searches are limited nearby context, not a permission check. Missing fields are not treated as cleared checks.
+
+The purchase price always remains the supplied listing/offer/proposed price when known. If unknown, a sale valuation can supply a clearly labelled provisional purchase scenario. Future sale scenarios start from the property-specific sale valuation when available, otherwise the purchase-price proxy. These two figures are not interchangeable.
 
 The financial model calculates:
 
 - Gross yield: scheduled annual rent divided by purchase price.
 - Net yield on cost: stabilised income after vacancy and operating costs divided by acquisition cost, including refurbishment and contingency.
 - Cash-on-cash: stabilised cash flow after debt payments, before income tax, divided by cash invested including reserves and upfront finance fees.
-- Cash, interest-only or repayment financing; monthly cash flow, annual totals, downside scenarios, break-even rent, exit proceeds and approximate annual IRR.
+- Cash, interest-only or repayment financing using the supplied mortgage amount and rate. Legacy records can still use an explicit LTV assumption.
+- Monthly cash flow, annual totals, downside scenarios, break-even rent, exit proceeds and approximate annual IRR for 3, 5 and 10 years of ownership and renting. The CSV contains a separate monthly schedule for each period. Interest-only comparisons beyond the supplied mortgage term are withheld until refinancing terms are known.
 
-Growth is a scenario assumption, not a rental yield or forecast. Income and disposal taxes are not automatically assessed; adviser-supplied budgets can be included. England purchase-tax settings and their source dates live in `config/tax_rules.json` and require maintenance. Defaults and missing evidence remain identified in the report. AI edits cannot directly overwrite computed results.
+When no price-growth assumption is supplied, the model uses the annualised local historical change over at least two years as an explicitly labelled scenario. It does not claim to predict future growth. The sold-price-per-square-foot history cross-check compares annualised changes over common periods; opposite directions or a difference of at least two percentage points are flagged, and the rates are never averaged. It can supply an explicitly labelled fallback scenario when the main growth series is absent. Rent growth uses the latest dated annual rental-inflation observation for the verified English region from `national-data`, unless explicitly supplied. The basis distinguishes an observation date from a dataset publication date. Regional history is extrapolated as a scenario, not a forecast of this property’s future rent. Unmatched, ambiguous, stale (over eighteen months), future-dated or implausible observations are withheld; missing evidence produces a visible no-growth fallback and warning. An intentionally supplied zero is preserved. Income and disposal taxes are not automatically assessed; adviser-supplied budgets can be included. An absent income-tax budget appears as a dash in the spreadsheet and blank in the CSV, not as a zero tax liability. Buyer ownership/residency affects SDLT; not owning another property is not treated as automatic first-time-buyer relief for a rental purchase. England purchase-tax settings and their source dates live in `config/tax_rules.json` and require maintenance. Defaults and missing evidence remain identified in the report. AI edits cannot directly overwrite computed results.
 
 ## Storage and repository
 

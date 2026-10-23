@@ -11,7 +11,10 @@
     try{if(id)localStorage.setItem(lastOpenedKey,id);else localStorage.removeItem(lastOpenedKey);}catch(e){}
   }
   function message(text,target='system'){
-    if(target==='revision-result'&&record){
+    if(target==='generation'){
+      $('generation-error').textContent='There was an error while generating the report, please try again (if the error persists, please contact Pablo Rubio).';
+      $('generation-error').hidden=false;
+    }else if(target==='revision-result'&&record){
       $('revision-result').textContent=text;revisionResults.set(record.id,text);
     }else if(text)console.warn(text);
   }
@@ -88,16 +91,21 @@
     d.dirty=true;renderPhotos();
   }
   function renderReport(){
-    const status=record.status==='approved'?['approved','Approved']:record.status==='ready_for_review'?['ready','Ready for review']:['draft','Draft'];
+    const area=record.inputs.enquiry?.kind==='area';
+    $('area-panel').hidden=!area;
+    const status=area?['ready','Needs follow-up']:record.status==='approved'?['approved','Approved']:record.status==='ready_for_review'?['ready','Ready for review']:['draft','Draft'];
     $('report-status').className='tag status-'+status[0];
     $('report-status').textContent=status[1];
     $('report-status').hidden=false;
     const hasPdf=!!record.artifacts?.pdf;
     $('draft-controls').hidden=hasPdf;
     $('photo-panel').hidden=!hasPdf;
-    $('run-panel').hidden=hasPdf&&record.status!=='needs_input';
+    $('run-panel').hidden=area||(hasPdf&&record.status!=='needs_input');
     $('review-approval').hidden=!hasPdf;
-    $('quick-rent-form').hidden=record.status!=='needs_input';
+    const missingRent=record.status==='needs_input';
+    const failedGeneration=record.status==='error'&&!hasPdf;
+    $('generation-error').textContent=missingRent||failedGeneration?'There was an error while generating the report, please try again (if the error persists, please contact Pablo Rubio).':'';
+    $('generation-error').hidden=!(missingRent||failedGeneration);
     const base='/api/records/'+record.id+'/download/';
     const preview=hasPdf?base+'pdf?inline=1&r='+record.revision+'&final='+!!record.approval:'';
     if(preview){if($('pdf-preview').getAttribute('src')!==preview)$('pdf-preview').src=preview;}else $('pdf-preview').removeAttribute('src');
@@ -108,7 +116,22 @@
   }
   function render(){
     $('record').hidden=false;
-    $('record-title').textContent=record.inputs.property.address;
+    const enquiry=record.inputs.enquiry||{};
+    const area=enquiry.kind==='area';
+    $('record-title').textContent=area?enquiry.area:record.inputs.property.address;
+    if(area){
+      const money=new Intl.NumberFormat('en-GB',{style:'currency',currency:'GBP',maximumFractionDigits:0});
+      const consent=record.consent||enquiry;
+      $('area-details').textContent=[
+        'Purchase budget: '+money.format(enquiry.budget),
+        'Contact: '+record.inputs.investor.name+' · '+record.inputs.investor.email,
+        'Purpose: '+({buy:'Considering a purchase',viewing:'Arranging a viewing',comparison:'Comparing investments',client:'Research for a client'}[enquiry.purpose]||enquiry.purpose),
+        'Goal: '+record.inputs.investor.goal,
+        record.inputs.investor.notes?'Notes: '+record.inputs.investor.notes:'',
+        'Feedback call: '+(consent.feedback_call?'May contact':'Not opted in'),
+        'Testimonial request: '+(consent.testimonial_contact?'May contact later':'Not opted in')
+      ].filter(Boolean).join('\n\n');
+    }
     $('record-subtitle').textContent=record.inputs.property.postcode+' · '+(record.inputs.investor.name||'Client');
     $('json-link').href='/api/records/'+record.id+'/download/json';
     $('generate').textContent=record.status==='running'?'Working…':'Generate report';
@@ -143,7 +166,7 @@
     }catch(e){message(e.message);if(record?.id===id)poll();}},1200);
   }
   async function pipeline(){
-    await post('/api/records/'+record.id+'/pipeline',{revision:record.revision,provider:record.mode==='demo'?'none':config.default_provider||'none',analyst_notes:$('additional-info').value});
+    await post('/api/records/'+record.id+'/pipeline',{revision:record.revision,provider:record.mode==='demo'?'none':config.default_provider||'none',analyst_notes:$('additional-info').value,refresh_evidence:record.status==='needs_input'});
     record=await api('/api/records/'+record.id);additionalNotes.delete(record.id);render();
   }
   async function savePhotos(){
@@ -163,7 +186,7 @@
   async function deleteRecord(id){
     const target=record?.id===id?record:await api('/api/records/'+id);
     if(target.status==='running')throw Error('Wait for this property to finish processing before deleting it.');
-    if(!window.confirm(`Do you want to delete this ${target.artifacts?.pdf?'report':'draft'}?`))return;
+    if(!window.confirm(`Delete “${target.inputs.enquiry?.kind==='area'?target.inputs.enquiry.area:target.inputs.property.address}” and its reports, photos and data?`))return;
     await api('/api/records/'+id,{method:'DELETE',body:JSON.stringify({revision:target.revision})});
     const photos=drafts.get(id);if(photos){release(photos.cover);photos.gallery.forEach(release);}
     drafts.delete(id);instructions.delete(id);revisionResults.delete(id);additionalNotes.delete(id);
@@ -184,8 +207,9 @@
     if(value===(record.inputs.analyst_notes||''))additionalNotes.delete(record.id);
     else additionalNotes.set(record.id,value);
   });
-  $('generate').addEventListener('click',action(async()=>{await savePhotos();await pipeline();}));
+  $('generate').addEventListener('click',action(async()=>{await savePhotos();await pipeline();},'generation'));
   $('delete-record').addEventListener('click',action(()=>deleteRecord(record.id)));
+  $('delete-area').addEventListener('click',action(()=>deleteRecord(record.id)));
   $('photo-form').addEventListener('submit',action(async()=>{if(!record?.artifacts?.pdf)return;await savePhotos();await list();}));
   for(const role of ['cover','gallery']){
     const input=$(role+'-photo-input'),zone=input.closest('[data-photo-zone]');let depth=0;
@@ -200,10 +224,6 @@
     const d=draft();if(button.dataset.removePhoto==='cover'){release(d.cover);d.cover=null;}else release(d.gallery.splice(Number(button.dataset.index),1)[0]);
     d.dirty=true;renderPhotos();
   });
-  $('quick-rent-form').addEventListener('submit',action(async()=>{
-    const inputs=structuredClone(record.inputs);inputs.assumptions.monthly_rent=Number($('quick-rent').value);inputs.assumptions.rent_source=$('quick-rent-source').value||'Analyst working assumption; not independently verified';
-    record=await api('/api/records/'+record.id,{method:'PUT',body:JSON.stringify({revision:record.revision,inputs})});await savePhotos();await pipeline();
-  }));
   $('revision-instruction').addEventListener('input',()=>{
     if(record)instructions.set(record.id,$('revision-instruction').value);
     controls();
