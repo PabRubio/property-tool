@@ -10,11 +10,44 @@ import urllib.error
 import urllib.parse
 import urllib.request
 from datetime import datetime, date, timedelta, timezone
+from pathlib import Path
 from .schema import api_property_type
 
 
 _paid_times = deque()
 _paid_lock = threading.Lock()
+_rent_cache_lock = threading.Lock()
+
+
+def cached_rent_data(fetch, cache_dir, usable, refresh=False):
+    """Reuse one regional dataset for 24 hours, retaining its retrieval date.
+
+    Only usable responses are cached. Serialise cache misses across the local
+    app's worker threads so simultaneous reports do not buy the same data twice.
+    """
+    from .store import atomic_json
+    path = Path(cache_dir) / 'regional-rent-inflation.json' if cache_dir is not None else None
+    with _rent_cache_lock:
+        if path is not None:
+            if not refresh:
+                try:
+                    entry = json.loads(path.read_text(encoding='utf-8'))
+                    if isinstance(entry, dict):
+                        stamp = datetime.fromisoformat(entry['retrieved_at'].replace('Z', '+00:00'))
+                        age = datetime.now(timezone.utc) - stamp
+                        if timedelta(0) <= age < timedelta(hours=24) and usable(entry.get('raw')):
+                            return entry['raw'], {'retrieved_at': entry['retrieved_at'], 'cached': True}
+                except (OSError, ValueError, TypeError, KeyError, AttributeError):
+                    pass
+            # Do not keep or silently fall back to an expired/invalid cache.
+            try: path.unlink()
+            except OSError: pass
+        raw = fetch()
+        metadata = {'retrieved_at': now(), 'cached': False}
+        if path is not None and usable(raw):
+            try: atomic_json(path, {'retrieved_at': metadata['retrieved_at'], 'raw': raw})
+            except OSError: pass  # A cache write failure must not discard fresh evidence.
+        return raw, metadata
 
 
 def pace_paid_requests():
@@ -184,9 +217,9 @@ hpi:refMonth ?month; hpi:housePriceIndex ?index; hpi:averagePrice ?price .
     return {"raw": raw, "series": sorted([r for r in rows if r["index"] is not None], key=lambda r:r["month"])}
 
 
-def gather(inputs, progress=lambda s: None, include_profile=True, public_only=False):
+def gather(inputs, progress=lambda s: None, include_profile=True, public_only=False, cache_dir=None, refresh_cache=False):
     from .evidence import enriched_inputs, matched_profile, valuation, fallback_title
-    from .market_evidence import regional_rent_growth, hydrate_comparables, usable_asking_count
+    from .market_evidence import regional_rent_growth, hydrate_comparables, usable_asking_count, usable_sold_count
     p = inputs['property']
     if inputs.get('enquiry', {}).get('kind') == 'area':
         raise ValueError('Area enquiries require manual follow-up')
@@ -209,6 +242,18 @@ def gather(inputs, progress=lambda s: None, include_profile=True, public_only=Fa
         evidence['paid_requests'].append({'endpoint': endpoint, 'budgeted_credits': 20 if endpoint == 'property' else 1,
                                          'params': dict(params), 'reason': reason})
         return pd_call(endpoint, params)
+
+    national_source = {}
+
+    def rental_inflation():
+        def usable(raw):
+            candidate = {'raw': {'national-data': raw}, 'location': evidence.get('location', {})}
+            return regional_rent_growth(candidate)['rate'] is not None
+        raw, metadata = cached_rent_data(
+            lambda: paid('national-data', {'dataset': 'rent-inflation-by-english-region'}),
+            cache_dir, usable, refresh_cache)
+        national_source.update(metadata)
+        return raw
 
     def collect(name, fn):
         titles = {'property': 'Property facts and sale history', 'rents': 'Local advertised rents',
@@ -243,6 +288,7 @@ def gather(inputs, progress=lambda s: None, include_profile=True, public_only=Fa
             elif name == 'prices': evidence['comparables'].extend(pd_comparables(raw, 'asking', name))
             elif name == 'national-data':
                 evidence['market'][name] = raw  # Keep dataset identity, units and date with values.
+                src.update(national_source)
                 src['scope'] = 'English region; historical annual rental inflation, not a local forecast'
                 result = regional_rent_growth(evidence)
                 if result['rate'] is None: raise ValueError(result['reason'])
@@ -320,13 +366,12 @@ def gather(inputs, progress=lambda s: None, include_profile=True, public_only=Fa
     if not public_only:
         for name, params in [
             ('rents', dict(area_params, bedrooms=p['bedrooms'])),
-            ('sold-prices', sold_params),
             ('prices-per-sqf', dict(area_params, **size_params)), ('growth', {'postcode': p['postcode']}),
             ('growth-psf', {'postcode': p['postcode']}),
-            ('national-data', {'dataset': 'rent-inflation-by-english-region'}),
             ('demand', {'postcode': p['postcode']}), ('demand-rent', {'postcode': p['postcode']}),
             ('sold-prices-per-sqf', dict(sold_params, **size_params))]:
             tasks.append((name, lambda n=name, q=params: paid(n, q)))
+        tasks.append(('national-data', rental_inflation))
         if a.get('refurbishment_planned') or (a.get('refurbishment') or 0) > 0:
             params = {'postcode': p['postcode'], 'results': 10, 'max_radius': .25, 'max_age': 1095}
             identity = matched_profile({'inputs': effective, 'evidence': evidence}).get('identity', {})
@@ -355,6 +400,14 @@ def gather(inputs, progress=lambda s: None, include_profile=True, public_only=Fa
         futures = [pool.submit(collect, name, fn) for name, fn in tasks]
         for future in futures: future.result()
     hydrate_comparables(evidence)
+    if not public_only:
+        sold_count = usable_sold_count(effective, evidence)
+        evidence['sold_search'] = {'qualifying_properties': sold_count, 'minimum_properties': 3,
+                                   'fallback_requested': sold_count < 3}
+        if sold_count < 3:
+            collect('sold-prices', lambda: paid('sold-prices', sold_params,
+                    'Fewer than three distinct recent sales within one mile matching type, bedrooms, size and tenure'))
+            hydrate_comparables(evidence)
     if not public_only and usable_asking_count(effective, evidence) < 3:
         collect('prices', lambda: paid('prices', dict(area_params, bedrooms=p['bedrooms']), 'Fewer than three usable asking-price candidates'))
         hydrate_comparables(evidence)

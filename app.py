@@ -193,10 +193,12 @@ def create_app(data_dir=None):
                     needs_pd=pd_ready and (evidence.get('version',0)<3 or not any(s.get('id')=='rents' for s in evidence.get('sources',[])))
                     if not evidence or b.get('refresh_evidence') is True or age>=60 or needs_pd:
                         progress('Researching the property and HM Land Registry records')
-                        r['evidence']=gather(r['inputs'],progress,include_profile=b.get('include_profile',True) is True,public_only=not pd_ready)
+                        r['evidence']=gather(r['inputs'],progress,include_profile=b.get('include_profile',True) is True,public_only=not pd_ready,
+                                             cache_dir=store.root/'.research-cache',refresh_cache=b.get('refresh_evidence') is True)
                         r['mode']='live'
                 if kind=="gather":
-                    new_evidence=gather(r["inputs"],progress,include_profile=b.get("include_profile",True) is True)
+                    new_evidence=gather(r["inputs"],progress,include_profile=b.get("include_profile",True) is True,
+                                        cache_dir=store.root/'.research-cache',refresh_cache=b.get('refresh_evidence') is True)
                     r.update(evidence=new_evidence,mode="live",status="draft")
                     message="Evidence gathered. Review sources and select comparables, then calculate."
                 else:

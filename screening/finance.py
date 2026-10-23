@@ -356,7 +356,7 @@ def analyse(inputs, evidence, mode, include_horizons=True):
             "rent_growth_basis": rent_growth_basis, "local_growth": growth,
             "growth_crosscheck": crosscheck, "regional_rent_growth": regional_rent, "property_context": context,
             "market_context": {"rent_sample": sample_context(evidence, 'rents'),
-                               "sold_sample": sample_context(evidence, 'sold-prices'),
+                               "sold_sample": sample_context(evidence, 'sold-prices' if evidence.get('raw', {}).get('sold-prices') else 'sold-prices-per-sqf'),
                                "sales_demand": demand_context(evidence, 'demand'),
                                "rental_demand": demand_context(evidence, 'demand-rent')},
             "valuations": {"sale": sale_valuation, "rent": rental_valuation, "profile_estimate": profile_estimate},

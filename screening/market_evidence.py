@@ -36,6 +36,38 @@ def usable_asking_count(inputs, evidence):
                and (not c.get('floor_area_sqm') or not p.get('floor_area_sqm') or .75 <= c['floor_area_sqm']/p['floor_area_sqm'] <= 1.25))
 
 
+def usable_sold_count(inputs, evidence):
+    """Conservative evidence threshold for skipping the broader paid search.
+
+    These are still candidates for analyst review, not verified comparables.
+    Missing facts never qualify a sale for this credit-saving shortcut.
+    """
+    p = inputs['property']
+    subject_area = numeric(p.get('floor_area_sqm'))
+    if not subject_area or subject_area <= 0: return 0
+    identity = matched_profile({'inputs': inputs, 'evidence': evidence}).get('identity', {})
+    subject_keys = {address_key(p['address']), address_key(p['address'], p['postcode'])}
+    if identity.get('address'): subject_keys.add(address_key(identity['address']))
+    seen = set()
+    for c in evidence.get('comparables', []):
+        if c.get('kind') != 'sold' or not c.get('address'): continue
+        key = address_key(c['address'])
+        if key in subject_keys: continue
+        amount, area, distance = (numeric(c.get(k)) for k in ('amount', 'floor_area_sqm', 'distance'))
+        if amount is None or amount <= 0 or area is None or not .75 <= area / subject_area <= 1.25: continue
+        # Zero distance can be the subject property (including an address alias).
+        if distance is None or not 0 < distance <= 1: continue
+        if c.get('property_type') != api_property_type(p) or numeric(c.get('bedrooms')) != p['bedrooms']: continue
+        if p['tenure'] in ('freehold', 'leasehold') and c.get('tenure') != p['tenure']: continue
+        if p.get('new_build') and c.get('transaction_class') != 'new_build': continue
+        if not str(c.get('source_url', '')).startswith(('http://', 'https://')): continue
+        try: age = (date.today() - date.fromisoformat(str(c.get('date', '')))).days
+        except ValueError: continue
+        if not 0 <= age <= 730: continue
+        seen.add(key)
+    return len(seen)
+
+
 def period(value):
     text = str(value or '').strip()
     for fmt in ('%Y-%m-%d', '%Y-%m', '%Y %b', '%b %Y', '%B %Y', '%Y %B'):
@@ -137,6 +169,7 @@ def sample_context(evidence, endpoint):
     bounds = data.get('80pc_range', [])
     bounds = [numeric(x) for x in bounds] if isinstance(bounds, list) else []
     return {'count': numeric(data.get('points_analysed')), 'radius_miles': numeric(data.get('radius')),
+            'unit': 'GBP/month' if endpoint == 'rents' else ('GBP/sqft' if endpoint.endswith('-per-sqf') else 'GBP'),
             'range_80': [round(x*multiplier, 2) for x in bounds] if len(bounds) == 2 and all(x is not None and x > 0 for x in bounds) else [],
             'earliest': data.get('date_earliest'), 'latest': data.get('date_latest'), 'source_id': endpoint}
 
