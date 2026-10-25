@@ -164,14 +164,15 @@ def pd_comparables(raw, kind, source_id=None):
                      "days_on_market": numeric(c.get("days_on_market")), "sstc": c.get("sstc"),
                      "tenure": c.get("tenure"), "transaction_class": c.get("class"),
                      "property_type": str(c.get("type", "")),
-                     "notes": "Distance reported: %s miles. %s" % (c.get("distance", "unknown"), "Confirm property match and date." if kind == "sold" else "Advertised price, not a completed transaction.")})
+                     "notes": "Distance reported: %s miles. %s" % (c.get("distance", "unknown"), {"sold":"Confirm property match and date.", "rent":"Advertised rent, not an achieved letting.", "asking":"Advertised price, not a completed transaction."}[kind])})
     return rows
 
 
 def land_registry(postcode, property_type, history=False):
+    from .comparisons import months_ago
     # Exact postcode avoids an unbounded district query. Sparse results remain explicit.
     types = {"flat": "flat-maisonette", "terraced_house": "terraced", "semi-detached_house": "semi-detached", "detached_house": "detached"}
-    since = "1995-01-01" if history else (date.today()-timedelta(days=730)).isoformat()
+    since = "1995-01-01" if history else months_ago(18).isoformat()
     query = '''PREFIX ppi: <http://landregistry.data.gov.uk/def/ppi/>
 PREFIX lr: <http://landregistry.data.gov.uk/def/common/>
 PREFIX xsd: <http://www.w3.org/2001/XMLSchema#>
@@ -196,7 +197,7 @@ FILTER(?date >= "%s"^^xsd:date)
         rows.append({"kind": "sold", "address": ", ".join(v(k) for k in ("saon", "paon", "street", "town", "postcode") if v(k)),
                      "amount": amount, "date": v("date")[:10], "source_url": v("tx"), "bedrooms": None,
                      "floor_area_sqm": None, "selected": False, "source": "HM Land Registry (direct)",
-                     "property_type": property_type, "notes": "Same postcode and property type; size, condition and bedroom count are not verified. Standard transaction; last 24 months."})
+                     "property_type": property_type, "notes": "Same postcode and property type; size, condition and bedroom count are not verified. Standard transaction; last 18 months."})
     if history:
         for row in rows:
             row["notes"] = "Postcode history candidate; exact address match required. Query capped at 200 transactions since 1995."
@@ -225,7 +226,7 @@ def gather(inputs, progress=lambda s: None, include_profile=True, public_only=Fa
         raise ValueError('Area enquiries require manual follow-up')
     if not public_only and not os.getenv('PROPERTYDATA_API_KEY'):
         raise ValueError('Add PROPERTYDATA_API_KEY before gathering evidence')
-    evidence = {'retrieved_at': now(), 'version': 3, 'sources': [], 'errors': [], 'raw': {}, 'market': {},
+    evidence = {'retrieved_at': now(), 'version': 4, 'sources': [], 'errors': [], 'raw': {}, 'market': {},
                 'comparables': [], 'profile': {}, 'hpi': [], 'country_verified': False, 'paid_requests': []}
     try:
         geo = request_json('https://api.postcodes.io/postcodes/' + urllib.parse.quote(p['postcode'], safe=''))
@@ -238,6 +239,8 @@ def gather(inputs, progress=lambda s: None, include_profile=True, public_only=Fa
         evidence['errors'].append({'source': 'Postcodes.io', 'message': str(exc)})
 
     def paid(endpoint, params, reason='Standard research'):
+        if endpoint in ('valuation-sale', 'valuation-rent') and params.get('bedrooms', 0) > 5:
+            raise ValueError('PropertyData /%s supports at most 5 bedrooms; this property has %s. Request skipped.' % (endpoint, params['bedrooms']))
         # Costs listed at request time; actual billing can be lower for incomplete profiles.
         evidence['paid_requests'].append({'endpoint': endpoint, 'budgeted_credits': 20 if endpoint == 'property' else 1,
                                          'params': dict(params), 'reason': reason})
@@ -270,6 +273,9 @@ def gather(inputs, progress=lambda s: None, include_profile=True, public_only=Fa
         if name.startswith('land-registry'): url = 'https://landregistry.data.gov.uk/app/ppd/'
         if name == 'hpi': url = 'https://landregistry.data.gov.uk/app/ukhpi/'
         src = {'id': name, 'title': titles.get(name, name), 'url': url, 'retrieved_at': now(), 'status': 'ok', 'scope': 'Property / local area'}
+        if name in ('rents', 'prices') and p['bedrooms'] > 5:
+            src['title'] += ' (all bedroom counts)'
+            src['scope'] = 'Local area and property type across all bedroom counts; not a matched %s-bedroom valuation' % p['bedrooms']
         try:
             raw = fn()
             evidence['raw'][name] = raw.get('raw', raw)
@@ -278,6 +284,7 @@ def gather(inputs, progress=lambda s: None, include_profile=True, public_only=Fa
                 d, avg, _ = rent_data(raw)
                 if avg is None: raise ValueError('No usable positive area rent returned')
                 evidence['market'].update(monthly_rent=avg, rent_sample_size=d.get('points_analysed'), rent_radius=d.get('radius'))
+                evidence['market']['rent_bedroom_filter_omitted'] = p['bedrooms'] > 5
                 evidence['comparables'].extend(pd_comparables(raw, 'rent'))
             elif name == 'sold-prices':
                 evidence['market']['sold_average'] = numeric(raw.get('data', {}).get('average'))
@@ -354,7 +361,8 @@ def gather(inputs, progress=lambda s: None, include_profile=True, public_only=Fa
     p, a = effective['property'], effective['assumptions']
     property_type = api_property_type(p)
     area_params = {'postcode': p['postcode'], 'type': property_type}
-    sold_params = dict(area_params, max_age=24)
+    bedroom_params = {'bedrooms': p['bedrooms']} if p['bedrooms'] <= 5 else {}
+    sold_params = dict(area_params, max_age=18)
     if p.get('new_build'): sold_params['class'] = 'new_build'
     if p['tenure'] in ('freehold', 'leasehold'): sold_params['tenure'] = p['tenure']
     size_params = {}
@@ -365,7 +373,7 @@ def gather(inputs, progress=lambda s: None, include_profile=True, public_only=Fa
              ('land-registry-history', lambda: land_registry(p['postcode'], property_type, history=True)), ('hpi', hpi)]
     if not public_only:
         for name, params in [
-            ('rents', dict(area_params, bedrooms=p['bedrooms'])),
+            ('rents', dict(area_params, **bedroom_params)),
             ('prices-per-sqf', dict(area_params, **size_params)), ('growth', {'postcode': p['postcode']}),
             ('growth-psf', {'postcode': p['postcode']}),
             ('demand', {'postcode': p['postcode']}), ('demand-rent', {'postcode': p['postcode']}),
@@ -388,12 +396,15 @@ def gather(inputs, progress=lambda s: None, include_profile=True, public_only=Fa
             evidence['valuation_note'] = 'Property valuation unavailable: size, age, condition, bathrooms, outdoor space and parking are required; minimum area 300 sqft.'
             for name in ('valuation-sale', 'valuation-rent'):
                 evidence['errors'].append({'source': name, 'message': evidence['valuation_note']})
-        evidence['refurbishment_basis'] = a['refurb_level'].replace('refurb_', '') + ' refurbishment; ' + a['refurb_finish'] + ' finish; ' + str(p.get('floor_area_sqm')) + ' sqm. Reference estimate, not a contractor quote.'
-        if p.get('floor_area_sqm') and p['floor_area_sqm'] * 10.7639104167 >= 600:
-            params = {'postcode': p['postcode'], 'internal_area': round(p['floor_area_sqm']*10.7639104167), 'project_type': a['refurb_level'], 'finish_quality': a['refurb_finish']}
-            tasks.append(('build-cost', lambda q=params: paid('build-cost', q)))
+        if a['refurb_level'] == 'none':
+            evidence['refurbishment_basis'] = 'No refurbishment selected; no estimate requested'
         else:
-            evidence['errors'].append({'source': 'build-cost', 'message': 'Refurbishment estimate requires a known area of at least 600 sqft; no area was inflated to obtain an estimate.'})
+            evidence['refurbishment_basis'] = a['refurb_level'].replace('refurb_', '') + ' refurbishment; ' + a['refurb_finish'] + ' finish; ' + str(p.get('floor_area_sqm')) + ' sqm. Reference estimate, not a contractor quote.'
+            if p.get('floor_area_sqm') and p['floor_area_sqm'] * 10.7639104167 >= 600:
+                params = {'postcode': p['postcode'], 'internal_area': round(p['floor_area_sqm']*10.7639104167), 'project_type': a['refurb_level'], 'finish_quality': a['refurb_finish']}
+                tasks.append(('build-cost', lambda q=params: paid('build-cost', q)))
+            else:
+                evidence['errors'].append({'source': 'build-cost', 'message': 'Refurbishment estimate requires a known area of at least 600 sqft; no area was inflated to obtain an estimate.'})
     else:
         evidence['errors'].append({'source': 'PropertyData', 'message': 'Not configured; property valuations and area rents unavailable.'})
     with concurrent.futures.ThreadPoolExecutor(max_workers=3) as pool:
@@ -409,7 +420,7 @@ def gather(inputs, progress=lambda s: None, include_profile=True, public_only=Fa
                     'Fewer than three distinct recent sales within one mile matching type, bedrooms, size and tenure'))
             hydrate_comparables(evidence)
     if not public_only and usable_asking_count(effective, evidence) < 3:
-        collect('prices', lambda: paid('prices', dict(area_params, bedrooms=p['bedrooms']), 'Fewer than three usable asking-price candidates'))
+        collect('prices', lambda: paid('prices', dict(area_params, **bedroom_params), 'Fewer than three usable asking-price candidates'))
         hydrate_comparables(evidence)
     evidence['sources'].sort(key=lambda s:s['id'])
     evidence['budgeted_credits'] = sum(r['budgeted_credits'] for r in evidence['paid_requests'])

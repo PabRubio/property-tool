@@ -134,7 +134,7 @@ def calculation_image(record, path, editor=None):
 
 
 class ReportPages:
-    """Fixed page coordinates bound every block; long input cannot create an eleventh page."""
+    """Core layouts plus flowing explanations and comparison continuation pages."""
     def __init__(self, path, record, final, editor=None):
         from reportlab.pdfgen import canvas
         self.canvas=canvas.Canvas(str(path),pagesize=A4)
@@ -175,21 +175,23 @@ class ReportPages:
         self.text(os.getenv('REPORT_BRAND','Property Screening'),45,self.top,self.width-160,22,11,True,kind='label')
         self.text(label,A4[0]-198,self.top,153,22,9,True,RED if self.record['mode']=='demo' else TEAL)
         c.setStrokeColor(self.accent);c.line(45,self.top-27,A4[0]-45,self.top-27)
-        self.text(title,45,self.top-41,self.width,55,self.editor.style['heading_size'],True,kind='heading')
+        self.text(title,45,self.top-41,self.width,60,min(self.editor.style['heading_size'],18) if len(title)>45 else self.editor.style['heading_size'],True,kind='heading')
         if subtitle: self.text(subtitle,45,self.top-101,self.width,32,9,kind='explanation' if title!='Property investment screening' else None)
         c.setStrokeColor(colors.lightgrey);c.line(45,42,A4[0]-45,42)
         self.text('%s | r%s | %s' % (self.record['id'][:10],self.record['revision'],now()[:10]),45,32,self.width-90,15,8)
-        self.text('%s / 10'%self.page,A4[0]-96,32,51,15,8,True)
+        self.text('Page %s'%self.page,A4[0]-96,32,51,15,8,True)
         return self.top-140
 
     def section(self,title,y):
-        self.text(title,45,y,self.width,28,13,True,kind='heading' if title!=self.record['analysis']['verdict'] else None)
-        return y-32
+        if y < 160: y=self.page_start('Assessment — continued')
+        self.text(title,45,y,self.width,34,11 if len(title)>48 else 13,True,kind='heading' if title!=self.record['analysis']['verdict'] else None)
+        return y-38
 
     def table(self,rows,y,widths=None,row_height=28,size=8):
         widths=widths or [self.width*.65,self.width*.35]
         for i,row in enumerate(rows):
-            if y-row_height<50: raise ValueError('Report table exceeds its fixed page')
+            if y-row_height<55:
+                y=self.page_start('Report details — continued')
             if i==0:
                 self.canvas.setFillColor(LIGHT);self.canvas.rect(45,y-row_height,sum(widths),row_height,fill=1,stroke=0)
             x=45
@@ -199,6 +201,36 @@ class ReportPages:
             self.canvas.setStrokeColor(colors.lightgrey);self.canvas.line(45,y-row_height,45+sum(widths),y-row_height)
             y-=row_height
         return y-12
+
+    def flow(self, text, y, title='Assessment — continued', size=9):
+        """Wrap and paginate in full. Never silently truncate research or reasoning."""
+        value = escape(str(text)).replace('\n','<br/>')
+        from .source_report import references
+        sources = {s['id']:s for s in references(self.record)}
+        def cite(match):
+            ids = match.group(1).split(', '); labels = []
+            for sid in ids:
+                url = sources.get(sid,{}).get('url','')
+                labels.append('<a href="'+escape(url,{'"':'&quot;'})+'" color="#19766e">'+sid+'</a>' if url.startswith(('http://','https://')) else sid)
+            return '['+', '.join(labels)+']'
+        value = re.sub(r'\[([a-zA-Z0-9_, -]+)\]',cite,value)
+        style=ParagraphStyle('flow',fontName=self.editor.style['font_family'],fontSize=size*self.editor.style['font_scale'],leading=size*1.45*self.editor.style['font_scale'],textColor=self.ink,splitLongWords=True,allowWidows=0,allowOrphans=0)
+        pending=[Paragraph(value,style)]
+        while pending:
+            if y<90:y=self.page_start(title)
+            paragraph=pending.pop(0);_,height=paragraph.wrap(self.width,y-58)
+            if height>y-58:
+                # Keep normal explanations and their citations together; only
+                # genuinely long passages need to split across pages.
+                if height<=300:
+                    y=self.page_start(title);pending.insert(0,paragraph);continue
+                parts=paragraph.split(self.width,y-58)
+                if not parts:
+                    y=self.page_start(title);pending.insert(0,paragraph);continue
+                paragraph=parts[0];pending=parts[1:]+pending;_,height=paragraph.wrap(self.width,y-58)
+            paragraph.drawOn(self.canvas,45,y-height);y-=height+12
+            if pending:y=self.page_start(title)
+        return y
 
     def photo(self,path,x,y,width,height):
         self.canvas.setFillColor(LIGHT);self.canvas.rect(x,y-height,width,height,fill=1,stroke=0)
@@ -241,14 +273,16 @@ def generate_report(record, folder, final=False):
     from .evidence import matched_profile, property_history
     from .photos import photo_groups
     # Upgrade old saved models locally, using their evidence, without API requests.
-    if record.get('analysis', {}).get('version') != 3 or not record.get('analysis', {}).get('horizons'):
+    if record.get('analysis', {}).get('version') != 4 or not record.get('analysis', {}).get('horizons'):
+        if record.get('mode') != 'demo':
+            raise ValueError('Generate the report again to refresh its calculations and AI conclusions before applying photos or finalizing this older draft.')
         from .finance import analyse
         from .narrative import deterministic
         from .evidence import enriched_inputs
         record['inputs'] = enriched_inputs(record['inputs'], record['evidence'])
         record['analysis'] = analyse(record['inputs'], record['evidence'], record['mode'])
         if not record['analysis']['available']: raise ValueError('Missing report inputs: '+', '.join(record['analysis'].get('missing', [])))
-        record['narrative'] = deterministic(record, 'Existing report model upgraded using saved evidence')
+        record['narrative'] = deterministic(record, 'Demo report model upgraded using saved evidence')
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
     prefix='r%s-%s'%(record['revision'],'reviewed' if final else 'draft')
     pdf,png,csv_path,calc=[folder/(prefix+s) for s in ('.pdf','-cashflow.png','-cashflow.csv','-calculations.png')]
@@ -263,247 +297,10 @@ def generate_report(record, folder, final=False):
                 item=dict(row,holding_years=horizon['years'])
                 if a['annual_tax_budget'] is None: item['tax_budget']=''
                 w.writerow(item)
-    editor.page=1
-    r=ReportPages(pdf,record,final,editor);W=r.width
-    def note(text,y,height=44,editable=True): return r.text(text,45,y,W,height,9,kind='explanation' if editable else None)-12
-    def cited(item): return item['text']+' ['+', '.join(item['source_ids'])+']'
-    def picture(path,y,height):
-        r.canvas.drawImage(ImageReader(io.BytesIO(path.read_bytes())),45,y-height,width=W,height=height)
-        return y-height-16
-    def link(label,url,x,y,width=495):
-        r.text(label,x,y,width,22,7,color=TEAL)
-        if str(url).startswith(('http://','https://')): r.canvas.linkURL(url,(x,y-20,x+width,y),relative=0)
-
-    photo,gallery=photo_groups(record)
-    order=record.get("presentation",{}).get("page_order",list(range(1,11)))
-    def page_number(canonical):return str(order.index(canonical)+1)
-
-    def page_1():
-        # 1. Subject, actual photo and acquisition decision inputs.
-        y=r.page_start('Property investment screening',p['address']+', '+p['postcode'])
-        y=note('Prepared for '+(investor['name'] or 'Client')+' | England rental | 3, 5 and 10 year ownership comparisons',y,28)
-        y=note('Goal: '+(investor['goal'] or 'Not supplied')+' | Available cash: '+gbp(investor['cash_budget']),y,40)
-        r.photo(folder/photo['filename'] if photo else None,45,y,W,185);y-=194
-        y=note((photo['caption']+' | '+photo['source']) if photo else 'A genuine subject-property photo can be added before delivery.',y,27)
-        rows=[['Acquisition overview','GBP'],['Client listing / offer price',gbp(p['asking_price'])],['Purchase price used for this scenario',gbp(v['purchase_price'])],['Total acquisition + refurbishment cost',gbp(v['total_property_cost'])],['Initial cash required, including buffer',gbp(v['cash_required'])]]
-        y=r.table(rows,y,row_height=27)
-        y=r.section(m['verdict'],y)
-        y=note('Monthly cash flow before income tax: '+gbp(v['monthly_cashflow_before_tax'])+' | Net yield on cost: '+pct(v['net_yield_on_cost_pct']),y,28)
-        note(m['price_basis']+'. Costs include purchase tax, fees and any planned works; cash required also reflects borrowing and reserves. Evidence gaps: pages '+', '.join(page_number(i) for i in (8,9,10))+'.',y,65)
-
-    def page_2():
-        y=r.page_start('Rental returns and growth assumptions','Rental returns use stabilised occupancy and are before income tax.')
-        y=r.drawing(yield_chart([v['gross_yield_pct'],v['net_yield_on_cost_pct'],v['cash_on_cash_pct']],height=110 if editor.style['font_scale']>1.05 else 155),y)
-        sale=e.get('market',{}).get('valuation-sale',{})
-        from .providers import numeric
-        margin=numeric(sale.get('margin')) if isinstance(sale,dict) else None
-        sale_label=gbp(m['valuations']['sale'])
-        if m['valuations']['sale'] and margin is not None and margin>=0: sale_label+=' ± '+gbp(margin)
-        if m['valuations']['sale'] and sale.get('confidence'): sale_label+=' ('+str(sale['confidence']).replace('_',' ')+' confidence)'
-        y=r.table([['Measure','Result / basis'],['Current sale estimate',sale_label],['Current rental estimate',gbp(m['valuations']['rent'])+' per month — property-specific model'],['Gross rental yield',pct(v['gross_yield_pct'])+' — scheduled annual rent / purchase price'],['Net yield on total cost',pct(v['net_yield_on_cost_pct'])+' — income after running costs / total cost'],['Cash-on-cash return',pct(v['cash_on_cash_pct'])+' — cash after debt / initial cash'],['Price growth scenario',pct(a['price_growth_pct'])+' per year'],['Rent growth scenario',pct(a['rent_growth_pct'])+' per year']],y,[190,W-190],25,8)
-        y=note(m['price_growth_basis'],y,44)
-        y=note(m['rent_growth_basis']+'. Operating costs grow by '+pct(a['cost_growth_pct'])+' per year, an illustrative budget assumption.',y,44)
-        y=r.table([['Ownership period','Property value under the growth scenario']]+[[str(h['years'])+' years',gbp(h['exit']['sale_price']) if h['available'] else 'Not modelled: mortgage term'] for h in m['horizons']],y,[190,W-190],26,8)
-        note('Starting value: '+gbp(m['starting_value'])+'. '+m['value_basis']+'. Future values are scenarios, not forecasts. No uplift from refurbishment is assumed.',y,56)
-
-    def page_3():
-        y=r.page_start('Purchase costs and refurbishment','Each cost is a budget or estimate unless supported by a supplied quote.')
-        y=picture(calc,y,180 if editor.style['font_scale']>1.05 else 210)
-        rows=[['Acquisition and financing','GBP'],['Purchase price',gbp(v['purchase_price'])],['Purchase tax (SDLT)',gbp(m['sdlt']['total'])],['Legal / survey / other purchase fees',gbp(a['legal_fees'])+' / '+gbp(a['survey_fees'])+' / '+gbp(a['other_purchase_costs'])],['Planned works including contingency',gbp(v['refurbishment_with_contingency'])],['Mortgage funds contributed to purchase','− '+gbp(v['loan'])],['Upfront finance fees / cash reserve',gbp(a['mortgage_fees'])+' / '+gbp(a['cash_reserve'])],['Initial cash required',gbp(v['cash_required'])]]
-        y=r.table(rows,y,row_height=24)
-        bands='; '.join(gbp(b['portion'])+' at '+pct(b['rate_pct']) for b in m['sdlt']['bands'])
-        y=note('Purchase tax: '+m['sdlt']['basis']+'. '+bands+'. Buyer circumstances supplied in the brief; no first-time-buyer relief assumed for a rental investment.',y,50)
-        prov=record['inputs'].get('input_provenance',{})
-        fee_basis='; '.join(label+': '+prov.get('assumptions.'+key,{}).get('basis','Illustrative budget; confirm quote') for key,label in [('legal_fees','Legal'),('survey_fees','Survey')])
-        y=note(fee_basis+'. Reserve is cash held aside, not a fee.',y,36)
-        ref=m['refurbishment_reference']
-        y=note('Refurbishment reference: '+gbp(ref['estimate'])+'. '+ref['basis']+'. '+ref['cost_basis']+'.',y,65)
-        note('Cash purchase: no mortgage interest or repayments.' if a['financing']=='cash' else 'Financing: '+a['financing'].replace('_',' ')+'; '+pct(a['interest_rate_pct'])+' annual interest; '+str(a['mortgage_term_years'])+' year term; '+gbp(v['monthly_debt_payment'])+' monthly payment. Borrowing reduces upfront cash but must be repaid.',y,42)
-
-    def page_4():
-        # 4. First-year screenshot and annual model.
-        y=r.page_start('Cash-flow spreadsheet','Monthly first-year working, followed by the ownership-period projection.')
-        y=picture(png,y,225)
-        annual=next((h['annual'] for h in m['horizons'] if h['available'] and h['years']==10),m['annual'])
-        shown=annual
-        rows=[['Year','Rent received','Operating costs','Debt service','Cash before tax']]+[[x['year'],gbp(x['collected_rent']),gbp(x['operating_costs']),gbp(x['interest']+x['principal']),gbp(x['cashflow_before_tax'])] for x in shown]
-        y=r.table(rows,y,[36,116,116,116,W-384],24,8)
-        y=note('Annual table shows '+('all model years.' if len(annual)<=8 else 'all years of the longest available comparison.')+' The full CSV contains separate monthly schedules for each ownership period.',y,42)
-        note('Base vacancy is '+pct(a['void_pct'])+' plus '+str(a['initial_void_months'])+' initial empty months. At 90% occupancy, stabilised monthly cash flow is '+gbp(next(x['monthly_cashflow'] for x in m['scenarios'] if x['name']=='90% occupancy'))+'. '+('Income tax has not been modelled; a dash is not a zero tax bill.' if a['annual_tax_budget'] is None else 'Supplied annual income-tax budget: '+gbp(a['annual_tax_budget'])) ,y,65)
-
-    def page_5():
-        y=r.page_start('Downside tests and ownership periods','Buy, rent out, then sell after 3, 5 or 10 years using the same starting assumptions.')
-        y=r.drawing(bar_chart(['Base','Lower|rent','Higher|interest','Higher|costs','90%|occupancy','Combined|downside'],[x['monthly_cashflow'] for x in m['scenarios']],'Monthly cash flow before income tax',height=130),y)
-        y=r.table([['Scenario','Rent / month','Interest','Vacancy','Cash / month']]+[[x['name'],gbp(x['monthly_rent']),pct(x['interest_rate_pct']),pct(x['void_pct']),gbp(x['monthly_cashflow'])] for x in m['scenarios']],y,[155,90,70,65,W-380],24,8)
-        y=r.section('Ownership comparison',y)
-        horizons=m['horizons']
-        def value(h,field,exit_field=False,percent=False):
-            if not h['available']: return 'Not modelled'
-            x=h['exit'][field] if exit_field else h[field]
-            return pct(x) if percent else gbp(x)
-        rows=[['Measure']+[str(h['years'])+' years' for h in horizons]]
-        for label,key,is_exit,is_pct in [('Rent collected','rental_income',False,False),('Operating costs','operating_costs',False,False),('Mortgage payments','debt_paid',False,False),('Rental cash accumulated','rental_cashflow',False,False),('Net sale proceeds','sale_proceeds',True,False),('Total profit incl. rental cash','total_profit',True,False),('Annualised return (IRR)','annual_irr_pct',True,True)]:
-            rows.append([label]+[value(h,key,is_exit,is_pct) for h in horizons])
-        y=r.table(rows,y,[175]+[(W-175)/3]*3,23,8)
-        unavailable=[str(h['years']) for h in horizons if not h['available']]
-        reasons=('Periods '+', '.join(unavailable)+' years exceed the interest-only mortgage term; refinancing is unknown.') if unavailable else ''
-        note('Sale proceeds deduct selling fees, debt and any supplied sale-tax budget. Rental cash deducts any supplied income-tax budget; otherwise tax is excluded. Longer ownership is not automatically better. '+reasons,y,64)
-
-    def page_6():
-        # 6. Facts, rooms and more actual photographs. Provider facts require identity match.
-        y=r.page_start('Property facts and photographs','Client details supplemented by a matched property profile; source details remain in the saved record.')
-        profile=matched_profile(record);building=profile.get('building',{})
-        provider_area=building.get('internal_area_sqf')
-        area=str(p['floor_area_sqm'])+' sqm' if p['floor_area_sqm'] else (str(provider_area)+' sqft [property]' if provider_area else 'Unknown')
-        facts=[['Property fact','Recorded detail'],['Type / bedrooms / bathrooms',p['property_type'].replace('_',' ')+' / '+str(p['bedrooms'])+' / '+str(p['bathrooms'] if p['bathrooms'] is not None else 'Unknown')],['Floor area / EPC',area+' / '+(p['epc_rating'] if p['epc_rating']!='unknown' else str(building.get('energy_rating','Unknown')))],['Tenure / remaining lease',p['tenure']+(' / not applicable' if p['tenure']=='freehold' else ' / '+str(p['lease_years'] if p['lease_years'] is not None else 'Unknown')+' years')],['Building safety / construction age',p['cladding_status'].replace('_',' ')+' / '+str(building.get('construction_age_band') or p['construction_date'] or 'Unknown')],['Habitable rooms / floor level',str(building.get('habitable_rooms') or 'Unknown')+' / '+str(building.get('floor_level') if building.get('floor_level') is not None else 'Unknown')+(' [property]' if building else '')],['Listing checked',p['listing_checked'] or 'Not confirmed']]
-        y=r.table(facts,y,[205,W-205],row_height=25)
-        context=m['property_context']
-        for j,fact in enumerate(context['facts']):
-            x=45+(j%2)*(W/2+4);top=y-(j//2)*35
-            r.text(fact['label']+': '+fact['value'],x,top,W/2-8,32,7.5)
-        y-=((len(context['facts'])+1)//2)*35+8
-        y=note('Profile observations [property]; confirm with searches and survey. '+(p['listing_notes'] or 'Room dimensions and alterations require a floorplan and survey.'),y,32)
-        photos=gallery
-        if photos:
-            columns=3 if len(photos)>6 else 2
-            rows=(len(photos)+columns-1)//columns
-            cell_width=(W-12*(columns-1))/columns
-            cell_height=min(158,(y-82)/rows)
-            for i,photo in enumerate(photos):
-                x=45+(i%columns)*(cell_width+12);top=y-(i//columns)*cell_height
-                image_height=cell_height-27
-                r.photo(folder/photo['filename'],x,top,cell_width,image_height)
-                r.text('Photo '+str(i+1)+' | '+photo.get('source','Uploaded by analyst'),x,top-image_height-4,cell_width,19,7)
-        else:
-            y=r.section('Additional photographs',y)
-            r.canvas.setFillColor(LIGHT);r.canvas.rect(45,y-165,W,165,fill=1,stroke=0)
-            r.text('ADDITIONAL PROPERTY PHOTOS\nNo additional photos supplied. Up to ten uploaded house photos will appear here.',65,y-50,W-40,65,11)
-        if p['listing_url']:link('Listing reference (open source)',p['listing_url'],45,65,W)
-
-    def page_7():
-        y=r.page_start('Sale history and market context','Recorded history and local observations; neither guarantees future prices or letting times.')
-        history=property_history(record)
-        shown=history[:4]
-        if shown:
-            y=r.table([['Sale date','Price paid','Source']]+[[x['date'],gbp(x['amount']),'Matched Land Registry record'] for x in shown],y,[100,120,W-220],24,8)
-            for i,row in enumerate(shown):
-                if str(row.get('source_url','')).startswith(('http://','https://')):
-                    top=y+12+(len(shown)-i)*24
-                    r.canvas.linkURL(row['source_url'],(45,top-24,A4[0]-45,top),relative=0)
-            y=note('Latest '+str(len(shown))+' of '+str(len(history))+' matched sales shown. Registration delays and omitted transactions can leave gaps.',y,28)
-        else:y=note('No exact-match subject sale history. Nearby sales are comparisons, not this property’s previous prices.',y,40)
-        if m['local_growth']:
-            y=r.drawing(line_chart([dict(x,index=x['value']) for x in m['local_growth']], 'Local historical prices (GBP) [growth]', 130),y)
-        else:y=note('Local average-price history unavailable; see the growth scenario basis on page '+page_number(2)+'.',y,30)
-        check=m['growth_crosscheck']
-        if check['price_rate'] is not None and check['psf_rate'] is not None:
-            detail='Same-period annualised change ('+check['from']+' to '+check['to']+'): average price '+pct(check['price_rate'])+'; sold price per sqft '+pct(check['psf_rate'])+' [growth-psf]. '+('Material difference: review property mix.' if check['material_difference'] else 'Cross-check only; these rates are not averaged.')
-        else:detail='Growth cross-check unavailable: the two series need at least two years of common observations.'
-        y=note(detail,y,38)
-        rows=[['Local market','Observed activity']]
-        for key,label in [('sales_demand','Sales'),('rental_demand','Rentals')]:
-            d=m['market_context'][key]
-            detail='; '.join(x['label']+': '+str(x['value']) for x in d['metrics'])
-            rows.append([label+': '+str(d['rating'] or 'Rating unavailable'),detail or 'Activity figures unavailable'])
-        y=r.table(rows,y,[175,W-175],37,7.5)
-        y=note('Area demand [demand, demand-rent] does not establish this property’s vacancy rate or time to sell.',y,25)
-        planning=m['property_context']['planning']
-        if planning['requested']:
-            rows=planning['rows']
-            detail=('Nearby planning: '+str(len(rows))+' applications returned. ' if rows else 'No usable planning records returned; absence does not establish consent. ')
-            if rows:
-                item=rows[0]
-                detail+='Example: '+str(item.get('address') or 'Address unavailable')+' — '+str(item.get('description') or item.get('reference') or 'Proposal unavailable')+'; '+str(item.get('decision') or 'Decision unavailable')+'. '
-            detail+='Limited search [planning-applications]; review the council record. This is not permission for proposed work.'
-            r.text(detail,45,y,W,max(25,y-55),7.5)
-            if rows and str(rows[0].get('url','')).startswith(('http://','https://')):r.canvas.linkURL(rows[0]['url'],(45,55,45+W,y),relative=0)
-
-    def page_8():
-        y=r.page_start('Comparable evidence','Asking prices, advertised rents and completed sales remain separate. Candidates require analyst review.')
-        sample=m['market_context']['rent_sample']
-        bounds=sample['range_80']
-        detail='Monthly rent used: '+gbp(v['monthly_rent'])+'. '+m['rent_basis']+'. '
-        detail+='Area rental sample: '+(str(int(sample['count'])) if sample['count'] is not None else 'unknown count')+'; radius '+(str(sample['radius_miles'])+' miles' if sample['radius_miles'] is not None else 'unknown')+'. '
-        if bounds:detail+='Middle 80% of advertised rents: '+gbp(bounds[0])+'–'+gbp(bounds[1])+' / month [rents]. This describes the area sample, not a valuation confidence interval.'
-        y=note(detail,y,75)
-        for kind,title in [('rent','Rental comparisons — monthly asking rent'),('sold','Recorded sales — transaction price'),('asking','For-sale comparisons — asking price')]:
-            y=r.section(title,y)
-            selected=[dict(c,source_id='comparable-'+str(i+1)) for i,c in enumerate(record['inputs']['comparables']) if c['kind']==kind and c['selected']]
-            candidates=ranked_comparables(record,kind)
-            rows=selected or candidates
-            shown=1 if editor.style['font_scale']>1.05 else 2
-            y=r.text(('Analyst-selected' if selected else 'Unverified ranked candidates')+'; showing '+str(min(shown,len(rows)))+' of '+str(len(rows))+'. Full evidence in saved record.',45,y,W,22,7.5)-4
-            if not rows:y=r.text('No usable comparison evidence returned.',45,y,W,32,8)-5
-            for c in rows[:shown]:
-                bed=str(int(c['bedrooms']))+' bed' if c.get('bedrooms') is not None else 'beds unknown'
-                area=str(c['floor_area_sqm'])+' sqm' if c.get('floor_area_sqm') else 'size unknown'
-                dist=str(c['distance'])+' miles' if c.get('distance') is not None else 'distance unknown'
-                stamp=c.get('date') if kind=='sold' else str(c.get('observed_at') or '')[:10]
-                timing=('Sale date: ' if kind=='sold' else 'Observed: ')+(stamp or 'unknown')
-                if kind!='sold' and c.get('days_on_market') is not None: timing+='; '+str(int(c['days_on_market']))+' days on market'
-                text=c['address']+' | '+gbp(c['amount'])+'\n'+bed+'; '+area+'; '+dist+'; '+c.get('property_type','type unknown').replace('_',' ')+'\n'+timing+' ['+c.get('source_id',c.get('source','source unknown'))+']'
-                top=y;y=r.text(text,45,y,W,47,8)-8
-                if str(c.get('source_url','')).startswith(('http://','https://')):r.canvas.linkURL(c['source_url'],(45,y,45+W,top),relative=0)
-        note('Sale estimate: '+gbp(m['valuations']['sale'])+' [valuation-sale]; rental estimate: '+gbp(m['valuations']['rent'])+' / month [valuation-rent]. Click a comparison to open its source. Estimates and advertised prices are not completed transactions.',y,45)
-
-    def page_9():
-        # 9. Written reasoning plus every model warning title.
-        y=r.page_start('Investment case and key risks','Evidence-led reasoning for the client’s existing property proposal.')
-        y=note(cited(n['summary']),y,60,editable=False)
-        y=r.section('Reasons to investigate',y)
-        if not n['strengths']:y=note('No clear financial strength has been established under the selected screening targets.',y,30)
-        for item in n['strengths'][:2]:y=note('• '+cited(item),y,43,editable=False)
-        y=r.section('Risks and qualifications',y)
-        for item in n['risks'][:2]:y=note('• '+cited(item),y,43,editable=False)
-        y=r.section('Model risk register',y)
-        grouped={}
-        for flag in m['flags']:
-            key=(flag['level'],flag['title'])
-            grouped[key]=grouped.get(key,0)+1
-        flags=[{'level':level,'title':title+(' ('+str(count)+' items)' if count>1 else '')} for (level,title),count in grouped.items()]
-        flags.sort(key=lambda f:{'critical':0,'warning':1,'info':2}.get(f['level'],3))
-        if not flags: note('No automated flags. Independent due diligence remains necessary.',y,35)
-        rows=(len(flags)+1)//2
-        rh=min(32,(y-75)/max(1,rows))
-        for i,f in enumerate(flags):
-            x=45+(i%2)*(W/2+4);top=y-(i//2)*rh
-            r.text(f['level'].upper()+': '+f['title'],x,top,W/2-8,rh-3,8,color=RED if f['level']=='critical' else INK)
-
-    def page_10():
-        y=r.page_start('Assumptions, sources and next steps','Research and information only; not financial, tax or legal advice.')
-        y=note('Vacancy '+pct(a['void_pct'])+'; management '+pct(a['management_pct'])+' of collected rent; maintenance '+pct(a['maintenance_pct'])+' of scheduled rent. Annual insurance '+gbp(a['insurance'])+', compliance '+gbp(a['compliance'])+', letting '+gbp(a['letting_fees'])+'. Unconfirmed costs remain illustrative budgets.',y,58)
-        for item in n['due_diligence'][:2]:y=note('• '+cited(item),y,35,editable=False)
-        y=r.section('Sources used and evidence gaps',y)
-        y=r.text('Financial tables use the stated inputs and assumptions. Links below open the sources; dates show when evidence was retrieved. The research record retains all inputs, comparisons and evidence gaps.',45,y,W,36,8)-10
-        sources=list(e.get('sources',[]))
-        tax_urls=m['sdlt']['rules']['sources']
-        sources.append({'id':'tax','title':'HMRC — residential purchase tax and surcharges','url':tax_urls[0],'retrieved_at':m['sdlt']['rules']['verified_on'],'status':'config checked'})
-        names={'sold-prices':'Nearby recorded sales','rents':'Local advertised rents','growth':'Local historical price growth','demand':'Local sales demand','demand-rent':'Local rental demand','property':'Property facts and sale history','prices-per-sqf':'Local asking prices by floor area','sold-prices-per-sqf':'Local sold prices by floor area','hpi':'England house prices (background)','land-registry':'Direct Land Registry comparisons','land-registry-history':'Direct Land Registry history','valuation-sale':'Property sale valuation','valuation-rent':'Property rental valuation','build-cost':'Refurbishment reference estimate'}
-        names['tax']='HMRC — purchase taxes'
-        columns=2 if len(sources)>18 else 1
-        count=(len(sources)+columns-1)//columns
-        rh=min(38 if columns==2 else 25,(y-115)/max(1,count))
-        top=y;cell=W/columns
-        for index,source in enumerate(sources):
-            title=names.get(source['id'],source['title'])
-            status={'ok':'Available','error':'Unavailable','no_data':'No records returned','config checked':'Rules checked'}.get(source['status'],source['status'])
-            label=title+('\n' if columns==2 else ' | ')+status+' | '+str(source.get('retrieved_at',''))[:10]
-            x=45+(index%columns)*cell;y=top-(index//columns)*rh
-            r.text(label,x,y,cell-8,rh-3,7.5 if columns==2 or rh<22 else 8,color=RED if source['status']=='error' else INK)
-            if str(source.get('url','')).startswith(('http://','https://')):r.canvas.linkURL(source['url'],(x,y-rh,x+cell-8,y),relative=0)
-        y=top-count*rh
-        failed=[x for x in e.get('errors',[]) if x.get('source') not in {x['id'] for x in sources if x['status']=='error'}]
-        if failed and y>90:
-            r.text('Other gaps: '+', '.join(x['source'] for x in failed)+'. See saved evidence for details.',45,y-4,W,28,8)
-        foot='Unavailable means a request failed or could not be used; it is not proof that no records exist. Contains HM Land Registry data © Crown copyright and database right '+now()[:4]+' under the Open Government Licence v3.0. '
-        foot+='Full monthly schedules for each ownership period are in the CSV. '
-        if final:foot+='Reviewed by '+record['approval']['reviewer']+' on '+record['approval']['at'][:10]+'. '
-        foot+='Review does not resolve missing evidence.'
-        r.text(foot,45,102,W,54,7.5)
-    pages={1:page_1,2:page_2,3:page_3,4:page_4,5:page_5,6:page_6,7:page_7,8:page_8,9:page_9,10:page_10}
-    for canonical in order:
-        editor.page=canonical
-        pages[canonical]()
+    from .report_layout import render_report
+    layout=render_report(record,pdf,folder,editor,final,png)
     record["report_document"]=editor.catalog
-    r.canvas.save()
-    return {'pdf':pdf.name,'cashflow_png':png.name,'cashflow_csv':csv_path.name,'calculations_png':calc.name,'generated_at':now(),'revision':record['revision'],'final':final,'page_count':10,'condensed':r.shortened}
+    from .source_report import generate_sources
+    source_path=folder/(prefix+'-sources.pdf')
+    source_pages=generate_sources(record,source_path)
+    return {'pdf':pdf.name,'sources_pdf':source_path.name,'cashflow_png':png.name,'cashflow_csv':csv_path.name,'calculations_png':calc.name,'generated_at':now(),'revision':record['revision'],'final':final,'sources_page_count':source_pages,**layout}

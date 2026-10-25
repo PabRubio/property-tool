@@ -13,6 +13,7 @@
   function message(text,target='system'){
     if(target==='generation'){
       $('generation-error').textContent='There was an error while generating the report, please try again (if the error persists, please contact Pablo Rubio).';
+      $('generation-error').classList.remove('input-check-clear');
       $('generation-error').hidden=false;
     }else if(target==='revision-result'&&record){
       $('revision-result').textContent=text;revisionResults.set(record.id,text);
@@ -29,7 +30,7 @@
   async function list(){
     const data=await api('/api/records');
     $('submissions-title').hidden=data.records.length===0;
-    $('records').innerHTML=data.records.map(r=>`<div class="record-card"><button type="button" class="record-button ${record?.id===r.id?'active':''}" data-record="${esc(r.id)}" ${working?'disabled':''}><strong>${esc(r.address)}</strong><small>${esc(r.postcode)} · ${esc(r.status.replaceAll('_',' '))}</small><small>${esc(r.investor||'No client name')}</small></button><button type="button" class="record-delete" data-delete-record="${esc(r.id)}" data-record-status="${esc(r.status)}" aria-label="Delete ${esc(r.address)}" title="${r.status==='running'?'Wait until processing finishes':'Delete'}" ${working||r.status==='running'?'disabled':''}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button></div>`).join('');
+    $('records').innerHTML=data.records.map(r=>`<div class="record-card"><button type="button" class="record-button ${record?.id===r.id?'active':''}" data-record="${esc(r.id)}" ${working?'disabled':''}><strong>${esc(r.address)}</strong><small>${esc(r.postcode)} · ${esc(r.status.replaceAll('_',' '))}</small><small>${esc(r.investor||'No client name')}</small></button><button type="button" class="record-delete" data-delete-record="${esc(r.id)}" data-record-status="${esc(r.status)}" aria-label="Delete ${esc(r.address)}" title="${['running','checking_inputs'].includes(r.status)?'Wait until processing finishes':'Delete'}" ${working||['running','checking_inputs'].includes(r.status)?'disabled':''}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button></div>`).join('');
     return data.records;
   }
   function draft(){
@@ -40,10 +41,11 @@
     }
     return drafts.get(record.id);
   }
-  function busy(){return working||record?.status==='running';}
+  function busy(){return working||['running','checking_inputs'].includes(record?.status);}
   function finalizationBlock(){
     if(!record?.artifacts?.pdf)return 'Generate a report first.';
-    if(record.status==='running')return 'Wait for the report to finish updating.';
+    if(['running','checking_inputs'].includes(record.status))return 'Wait for the current check to finish.';
+    if(!record.analysis?.available)return 'Essential evidence is unresolved; the financial assessment is incomplete.';
     const d=draft();
     if(!d.cover||d.cover instanceof File||!d.cover.filename)return 'Add a cover photo to the PDF first.';
     if(d.dirty)return 'Save your photo changes first.';
@@ -51,10 +53,10 @@
     return '';
   }
   function controls(){
-    document.querySelectorAll('#record button,#record input,#record textarea').forEach(el=>el.disabled=busy());
+    document.querySelectorAll('#record button,#record input,#record textarea,#record select').forEach(el=>el.disabled=busy());
     document.querySelectorAll('[data-record]').forEach(el=>el.disabled=working);
     document.querySelectorAll('[data-delete-record]').forEach(el=>{
-      const running=(record?.id===el.dataset.deleteRecord?record.status:el.dataset.recordStatus)==='running';
+      const running=['running','checking_inputs'].includes(record?.id===el.dataset.deleteRecord?record.status:el.dataset.recordStatus);
       el.disabled=working||running;el.title=running?'Wait until processing finishes':'Delete';
     });
     document.querySelectorAll('[data-photo-zone]').forEach(el=>el.classList.toggle('is-disabled',busy()));
@@ -62,6 +64,8 @@
     const reason=busy()?'Wait for the current operation to finish.':finalizationBlock();
     $('finalize').disabled=!!reason;
     $('finalize').title=reason;
+    $('generate').disabled=busy();
+    $('generate').title='';
   }
   function release(file){if(file instanceof File&&previewUrls.has(file)){URL.revokeObjectURL(previewUrls.get(file));previewUrls.delete(file);}}
   function imageUrl(photo){
@@ -93,24 +97,29 @@
   function renderReport(){
     const area=record.inputs.enquiry?.kind==='area';
     $('area-panel').hidden=!area;
-    const status=area?['ready','Needs follow-up']:record.status==='approved'?['approved','Approved']:record.status==='ready_for_review'?['ready','Ready for review']:['draft','Draft'];
+    const status=area?['ready','Needs follow-up']:record.status==='checking_inputs'?['draft','Checking inputs']:record.status==='approved'?['approved','Approved']:record.status==='ready_for_review'?['ready','Ready for review']:['draft','Draft'];
     $('report-status').className='tag status-'+status[0];
     $('report-status').textContent=status[1];
     $('report-status').hidden=false;
     const hasPdf=!!record.artifacts?.pdf;
-    $('draft-controls').hidden=hasPdf;
+    const readyForReview=hasPdf&&!!record.analysis?.available;
+    $('draft-controls').hidden=readyForReview;
     $('photo-panel').hidden=!hasPdf;
-    $('run-panel').hidden=area||(hasPdf&&record.status!=='needs_input');
+    $('run-panel').hidden=area||readyForReview;
     $('review-approval').hidden=!hasPdf;
     const missingRent=record.status==='needs_input';
     const failedGeneration=record.status==='error'&&!hasPdf;
-    $('generation-error').textContent=missingRent||failedGeneration?'There was an error while generating the report, please try again (if the error persists, please contact Pablo Rubio).':'';
-    $('generation-error').hidden=!(missingRent||failedGeneration);
+    const check=record.preflight;
+    const checkMessage=check?.summary?'Submission check: '+check.summary:'';
+    const generationMessage=missingRent?'Essential evidence remains unresolved. The research PDF explains what is missing and the next steps.':failedGeneration?'Report generation could not complete. Check the configured provider and retry.':'';
+    $('generation-error').textContent=[checkMessage,generationMessage].filter(Boolean).join('\n');
+    $('generation-error').hidden=!$('generation-error').textContent;
+    $('generation-error').classList.toggle('input-check-clear',!generationMessage&&['clear','running'].includes(check?.status));
     const base='/api/records/'+record.id+'/download/';
     const preview=hasPdf?base+'pdf?inline=1&r='+record.revision+'&final='+!!record.approval:'';
     if(preview){if($('pdf-preview').getAttribute('src')!==preview)$('pdf-preview').src=preview;}else $('pdf-preview').removeAttribute('src');
     $('report-pages').textContent=record.artifacts?.page_count?record.artifacts.page_count+' pages':'Saved PDF';
-    $('downloads').innerHTML=hasPdf?`<a class="button" href="${base}pdf">Download ${record.approval?'reviewed':'draft'} PDF</a><a class="button secondary" target="_blank" href="${base}pdf?inline=1">Open PDF</a><a class="small" href="${base}cashflow_png">Cash-flow image</a>${record.artifacts.calculations_png?`<a class="small" href="${base}calculations_png">Calculation sheet</a>`:''}<a class="small" href="${base}cashflow_csv">Full CSV</a>`:'';
+    $('downloads').innerHTML=hasPdf?`<a class="button" href="${base}pdf">Download ${record.approval?'reviewed':'draft'} PDF</a><a class="button secondary" target="_blank" href="${base}pdf?inline=1">Open PDF</a>${record.artifacts.cashflow_png?`<a class="small" href="${base}cashflow_png">Cash-flow image</a>`:''}${record.artifacts.calculations_png?`<a class="small" href="${base}calculations_png">Calculation sheet</a>`:''}${record.artifacts.sources_pdf?`<a class="button secondary" href="${base}sources_pdf">Sources &amp; Evidence PDF</a>`:''}${record.artifacts.cashflow_csv?`<a class="small" href="${base}cashflow_csv">Full CSV</a>`:''}`:'';
     $('revision-result').textContent=revisionResults.get(record.id)||'';
     $('finalize').textContent=record.approval?'Download final PDF':'Approve & finalize';
   }
@@ -134,10 +143,12 @@
     }
     $('record-subtitle').textContent=record.inputs.property.postcode+' · '+(record.inputs.investor.name||'Client');
     $('json-link').href='/api/records/'+record.id+'/download/json';
-    $('generate').textContent=record.status==='running'?'Working…':'Generate report';
+    $('generate').textContent=['running','checking_inputs'].includes(record.status)?'Working…':record.artifacts?.pdf?'Regenerate report':'Generate report';
+    // Keep submitted text until the server has actually saved the corrections.
+    if(additionalNotes.get(record.id)===(record.inputs.analyst_notes??''))additionalNotes.delete(record.id);
     $('additional-info').value=additionalNotes.get(record.id)??record.inputs.analyst_notes??'';
     renderReport();renderPhotos();
-    if(record.status==='running')poll();
+    if(['running','checking_inputs'].includes(record.status))poll();
   }
   async function open(id){
     clearTimeout(pollTimer);record=await api('/api/records/'+id);$('revision-instruction').value=instructions.get(id)||'';render();remember(id);history.replaceState(null,'','/review?id='+id);await list();
@@ -158,7 +169,7 @@
     clearTimeout(pollTimer);const id=record.id;
     pollTimer=setTimeout(async()=>{try{
       const latest=await api('/api/records/'+id);if(record?.id!==id)return;record=latest;
-      if(record.status==='running')poll();
+      if(['running','checking_inputs'].includes(record.status))poll();
       else{
         finishRevision();
         render();await list();if(record.job?.state==='failed'&&record.job.kind!=='revise')message(record.job.message);
@@ -166,8 +177,10 @@
     }catch(e){message(e.message);if(record?.id===id)poll();}},1200);
   }
   async function pipeline(){
-    await post('/api/records/'+record.id+'/pipeline',{revision:record.revision,provider:record.mode==='demo'?'none':config.default_provider||'none',analyst_notes:$('additional-info').value,refresh_evidence:record.status==='needs_input'});
-    record=await api('/api/records/'+record.id);additionalNotes.delete(record.id);render();
+    const notes=$('additional-info').value;
+    additionalNotes.set(record.id,notes);
+    await post('/api/records/'+record.id+'/pipeline',{revision:record.revision,provider:record.mode==='demo'?'none':config.default_provider||'none',analyst_notes:notes,refresh_evidence:record.status==='needs_input'});
+    record=await api('/api/records/'+record.id);render();
   }
   async function savePhotos(){
     const d=draft();if(!d.dirty)return;
@@ -185,7 +198,7 @@
   };}
   async function deleteRecord(id){
     const target=record?.id===id?record:await api('/api/records/'+id);
-    if(target.status==='running')throw Error('Wait for this property to finish processing before deleting it.');
+    if(['running','checking_inputs'].includes(target.status))throw Error('Wait for this property to finish processing before deleting it.');
     if(!window.confirm(`Delete “${target.inputs.enquiry?.kind==='area'?target.inputs.enquiry.area:target.inputs.property.address}” and its reports, photos and data?`))return;
     await api('/api/records/'+id,{method:'DELETE',body:JSON.stringify({revision:target.revision})});
     const photos=drafts.get(id);if(photos){release(photos.cover);photos.gallery.forEach(release);}
@@ -206,6 +219,7 @@
     const value=$('additional-info').value;
     if(value===(record.inputs.analyst_notes||''))additionalNotes.delete(record.id);
     else additionalNotes.set(record.id,value);
+    controls();
   });
   $('generate').addEventListener('click',action(async()=>{await savePhotos();await pipeline();},'generation'));
   $('delete-record').addEventListener('click',action(()=>deleteRecord(record.id)));

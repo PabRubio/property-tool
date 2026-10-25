@@ -29,7 +29,7 @@ def identity_matches(p, identity):
 
 def address_key(address, postcode=''):
     key = re.sub(r'[^A-Z0-9]', '', str(address).upper())
-    pc = re.sub(r'[^A-Z0-9]', '', postcode.upper())
+    pc = re.sub(r'[^A-Z0-9]', '', str(postcode or '').upper())
     return key if not pc or key.endswith(pc) else key + pc
 
 
@@ -52,7 +52,7 @@ def property_history(record):
     candidates += [c for c in record['inputs']['comparables'] if c['selected']]
     for c in candidates:
         if c.get('kind') == 'sold' and address_key(c.get('address', '')) == target:
-            rows.append(dict(c, source_id='land-registry-history' if c.get('source', '').startswith('HM Land') else 'inputs'))
+            rows.append(dict(c, source_id=c.get('source_id') or ('land-registry-history' if c.get('source', '').startswith('HM Land') else 'inputs')))
     profile = matched_profile(record)
     sales = profile.get('sales', {})
     if sales.get('data_status') == 'found':
@@ -80,6 +80,23 @@ def enriched_inputs(inputs, evidence):
     out = copy.deepcopy(inputs)
     for group in ('property', 'assumptions', 'investor', 'enquiry'):
         out[group] = dict(defaults()[group], **out.get(group, {}))
+    for path, source in list(out.get('input_provenance',{}).items()):
+        if path.startswith('property.') and source.get('source_id','').startswith('research-'):
+            out['property'][path.split('.',1)[1]] = defaults()['property'][path.split('.',1)[1]]
+            out['input_provenance'].pop(path,None)
+    # Research facts fill unknowns only. Preserve client facts and conflicting evidence.
+    choices = {'construction_date': ('pre_1914','1914_2000','2000_onwards'), 'epc_rating': tuple('ABCDEFG'),
+               'tenure': ('freehold','leasehold'), 'finish_quality': ('very_high','high','average','below_average','unmodernised'),
+               'outdoor_space': ('none','balcony_terrace','garden','garden_very_large')}
+    ranges = {'floor_area_sqm': (1,10000), 'bathrooms': (0,5), 'off_street_parking': (0,3), 'lease_years': (0,999)}
+    for path, fact in evidence.get('researched_facts', {}).items():
+        if not path.startswith('property.'): continue
+        key = path.split('.',1)[1]; value = fact.get('value')
+        valid = value in choices[key] if key in choices else (key in ranges and not isinstance(value,bool) and isinstance(value,(float,int)) and ranges[key][0] <= value <= ranges[key][1])
+        if key in ('bathrooms','off_street_parking') and valid: valid = value % 1 == 0
+        if valid and out['property'].get(key) in (None,'','unknown'):
+            out['property'][key] = value
+            out.setdefault('input_provenance',{})[path] = {'basis':'Cited web research', 'source_id':fact['source_ids'][0], 'recorded_at':fact['retrieved_at']}
     # A fresh research snapshot must refresh previously derived facts too. Explicit
     # client/analyst corrections have their own provenance and remain untouched.
     for path, source in list(out.get('input_provenance', {}).items()):

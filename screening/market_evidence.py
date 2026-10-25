@@ -42,6 +42,7 @@ def usable_sold_count(inputs, evidence):
     These are still candidates for analyst review, not verified comparables.
     Missing facts never qualify a sale for this credit-saving shortcut.
     """
+    from .comparisons import recent_sale
     p = inputs['property']
     subject_area = numeric(p.get('floor_area_sqm'))
     if not subject_area or subject_area <= 0: return 0
@@ -63,7 +64,7 @@ def usable_sold_count(inputs, evidence):
         if not str(c.get('source_url', '')).startswith(('http://', 'https://')): continue
         try: age = (date.today() - date.fromisoformat(str(c.get('date', '')))).days
         except ValueError: continue
-        if not 0 <= age <= 730: continue
+        if not recent_sale(c): continue
         seen.add(key)
     return len(seen)
 
@@ -195,22 +196,43 @@ def property_context(inputs, evidence):
         charge = numeric(council.get('annual_charge'))
         facts.append({'label': 'Council tax', 'value': 'Band '+str(council.get('band') or 'unknown')+(('; £{:,.0f} / year'.format(charge)) if charge else '')+' — confirm current charge', 'source_id': 'property'})
     else: facts.append({'label': 'Council tax', 'value': 'Unavailable'})
+    researched_council = evidence.get('researched_facts',{}).get('property.council_tax')
+    if researched_council and not council.get('band'):
+        facts[-1]={'label':'Council tax','value':researched_council['text'],'source_id':researched_council['source_ids'][0]}
     flood = constraints.get('flood_risk', {})
     risk = flood.get('flood_risk') if flood.get('data_status') == 'found' else None
-    facts.append({'label': 'River / sea flood risk', 'value': str(risk or 'Unavailable')+'; surface-water risk not assessed', 'source_id': 'property' if risk else None})
+    researched_flood = evidence.get('researched_facts',{}).get('constraint.flood_risk')
+    if not risk and researched_flood:
+        risk = researched_flood['value']
+    facts.append({'label': 'River / sea flood risk', 'value': str(risk or 'Unresolved'), 'source_id': 'property' if risk else None})
+    if researched_flood and flood.get('data_status') != 'found': facts[-1]['source_id'] = researched_flood['source_ids'][0]
+    surface = evidence.get('researched_facts',{}).get('constraint.surface_water_flood_risk')
+    facts.append({'label':'Surface-water flood risk','value':surface['text'] if surface else 'Unresolved; river / sea risk does not establish surface-water risk','source_id':surface['source_ids'][0] if surface else None})
+    listed = evidence.get('researched_facts',{}).get('constraint.listed')
+    if listed: facts.append({'label':'Subject listed-building status', 'value':listed['text'], 'source_id':listed['source_ids'][0]})
     if risk and str(risk).lower() not in ('low', 'very low'):
         flags.append({'level': 'warning', 'title': 'Flood evidence needs review', 'detail': 'The matched profile reports '+str(risk)+' river / sea flood risk. Check detailed searches and insurance terms.'})
     for field, label in [('conservation_area', 'Conservation area'), ('green_belt', 'Green belt'), ('aonb', 'National landscape'), ('national_park', 'National park')]:
         part = constraints.get(field, {})
         value = part.get(field) if part.get('data_status') == 'found' else None
         name = part.get(field+'_name', part.get('name'))
-        text = ('Yes'+(' — '+str(name) if name else '')) if value is True else ('Not identified in this dataset' if value is False else 'Unavailable / inconclusive')
-        facts.append({'label': label, 'value': text, 'source_id': 'property' if value is not None else None})
+        text = ('Yes'+(' — '+str(name) if name else '')) if value is True else ('No — the matched PropertyData record reports the property outside this designation' if value is False else 'Unavailable / inconclusive')
+        researched = evidence.get('researched_facts', {}).get('constraint.'+field)
+        if value is None and researched:
+            value = researched['value']
+            text = ('Identified' if value else 'Not identified by the cited official evidence')+'; '+researched['text']
+            facts.append({'label': label, 'value': text, 'source_id': researched['source_ids'][0]})
+        else:
+            if value is None:
+                finding = next((f for f in evidence.get('research',{}).get('findings',[]) if f.get('gap_id') == 'constraint.'+field), None)
+                text = 'Unresolved after provider and web research' if finding else 'Unresolved; fallback research has not completed'
+            facts.append({'label': label, 'value': text, 'source_id': 'property' if value is not None else None})
         if value is True:
             flags.append({'level': 'warning', 'title': label+' recorded', 'detail': 'Check restrictions with the local authority before assuming alterations or development are possible.'})
     listed = constraints.get('listed_buildings_nearby', {})
     nearby = listed.get('listed_buildings', []) if listed.get('data_status') == 'found' else None
-    facts.append({'label': 'Nearby listed buildings', 'value': (str(len(nearby))+' returned' if isinstance(nearby, list) else 'Unavailable')+'; subject listing status unverified', 'source_id': 'property' if nearby is not None else None})
+    subject_text = '; subject status is stated separately' if evidence.get('researched_facts',{}).get('constraint.listed') else '; subject listing status unverified'
+    facts.append({'label': 'Nearby listed buildings', 'value': (str(len(nearby))+' returned' if isinstance(nearby, list) else 'Unavailable')+subject_text, 'source_id': 'property' if nearby is not None else None})
     planning_raw = evidence.get('raw', {}).get('planning-applications')
     planning = {'requested': planning_raw is not None or any(x['id'] == 'planning-applications' for x in evidence.get('sources', [])), 'rows': [], 'basis': evidence.get('planning_basis', '')}
     if isinstance(planning_raw, dict):

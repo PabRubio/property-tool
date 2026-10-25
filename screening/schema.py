@@ -20,10 +20,16 @@ FIELDS = [
     ("ltv_pct", "Mortgage as % of purchase price", "Finance", 75, 0, 95),
     ("interest_rate_pct", "Annual mortgage interest rate (%)", "Finance", 5.5, 0, 30),
     ("mortgage_term_years", "Mortgage term (years)", "Finance", 25, 1, 40),
+    ("deposit_amount", "Deposit towards purchase (£)", "Finance", None, 1, 100000000),
+    ("deposit_pct", "Deposit as % of purchase price", "Finance", None, 5, 99.99),
+    ("fixed_rate_years", "Years until fixed interest rate ends", "Finance", None, 1, 10),
+    ("rate_after_fix_pct", "Interest rate after fixed period (%)", "Finance", None, 0, 50),
     ("void_pct", "Ongoing rent lost to vacancies / arrears (%)", "Rent & running costs", 5, 0, 100),
     ("initial_void_months", "Initial whole months without rent", "Rent & running costs", 0, 0, 24),
     ("management_pct", "Management fee incl. VAT (% of collected rent)", "Rent & running costs", 12, 0, 50),
     ("maintenance_pct", "Maintenance allowance (% of scheduled rent)", "Rent & running costs", 5, 0, 50),
+    ("regular_cleaning", "Annual landlord-paid regular cleaning (£; blank = unknown)", "Rent & running costs", None, 0, 100000),
+    ("turnover_cleaning", "Annual landlord-paid cleaning between tenancies (£; blank = unknown)", "Rent & running costs", None, 0, 100000),
     ("service_charge", "Annual service charge (£; blank = unknown)", "Rent & running costs", None, 0, 1000000),
     ("ground_rent", "Annual ground rent (£; blank = unknown)", "Rent & running costs", None, 0, 1000000),
     ("insurance", "Annual landlord insurance (£)", "Rent & running costs", 350, 0, 100000),
@@ -46,7 +52,7 @@ FIELDS = [
     ("rate_stress_pp", "Stress scenario: interest rise (percentage points)", "Screening targets", 2, 0, 20),
     ("cost_stress_pct", "Stress scenario: running-cost increase (%)", "Screening targets", 20, 0, 200),
 ]
-INT_FIELDS = {"mortgage_term_years", "initial_void_months", "holding_years"}
+INT_FIELDS = {"mortgage_term_years", "fixed_rate_years", "initial_void_months", "holding_years"}
 PROPERTY_TYPES = ["flat", "converted_flat", "studio", "terraced_house", "semi-detached_house", "detached_house", "bungalow"]
 
 
@@ -67,7 +73,7 @@ def defaults():
                          "building_attachment": "", "new_build": False, "price_status": "unknown"},
             "assumptions": dict({f[0]: f[3] for f in FIELDS}, financing="unknown", buyer_type="individual",
                                 additional_property=True, nonresident=False, corporate_relief_confirmed=False,
-                                new_lease=False, rent_source="", cost_source="", finance_source="", tax_source="",
+                                new_lease=False, rate_type="unknown", rent_source="", cost_source="", finance_source="", tax_source="",
                                 refurbishment_planned=False, refurb_level="refurb_light", refurb_finish="medium"),
             "comparables": [], "analyst_notes": "", "input_provenance": {}}
 
@@ -173,7 +179,7 @@ def validate(payload):
     if p['property_type'] == 'studio': p['bedrooms'] = 0
     p["floor_area_sqm"] = number(p["floor_area_sqm"], "Floor area", 1, 10000)
     p["lease_years"] = number(p["lease_years"], "Lease years", 0, 999)
-    p["bedrooms"] = number(p["bedrooms"], "Bedrooms", 0, 5, False)
+    p["bedrooms"] = number(p["bedrooms"], "Bedrooms", 0, 20, False)
     if p["bedrooms"] % 1:
         raise ValueError("Bedrooms must be a whole number")
     p["bedrooms"] = int(p["bedrooms"])
@@ -189,7 +195,7 @@ def validate(payload):
         raise ValueError("UPRN must contain up to 12 digits")
     for key, label, _, default, low, high in FIELDS:
         a[key] = number(a[key], label, low, high, default is None)
-        if key in INT_FIELDS:
+        if key in INT_FIELDS and a[key] is not None:
             if a[key] % 1:
                 raise ValueError(label + " must be a whole number")
             a[key] = int(a[key])
@@ -198,9 +204,21 @@ def validate(payload):
             raise ValueError(key + " must be true or false")
     for key in ("rent_source", "cost_source", "finance_source", "tax_source"):
         a[key] = string(a[key], key)
-    if a['refurb_level'] not in ('refurb_light', 'refurb_moderate', 'refurb_heavy') or a['refurb_finish'] not in ('basic', 'medium', 'premium'): raise ValueError('Invalid refurbishment reference')
-    if a["financing"] not in ("unknown", "cash", "interest_only", "repayment") or a["buyer_type"] not in ("individual", "company"):
+    if a['refurb_level'] not in ('none', 'refurb_light', 'refurb_moderate', 'refurb_heavy') or a['refurb_finish'] not in ('basic', 'medium', 'premium'): raise ValueError('Invalid refurbishment reference')
+    if a['refurb_level'] == 'none':
+        if a['refurbishment_planned'] or (a['refurbishment'] or 0) > 0:
+            raise ValueError('Choose a refurbishment level before including planned works or a refurbishment budget')
+        a['refurbishment'] = 0
+    if a["financing"] not in ("unknown", "cash", "interest_only", "repayment", "mortgage_unsure") or a["buyer_type"] not in ("individual", "company"):
         raise ValueError("Invalid finance or buyer type")
+    if a.get('deposit_amount') is not None and a.get('deposit_pct') is not None: raise ValueError('Supply a deposit amount or percentage, not both')
+    if a.get('mortgage_amount') is not None and (a.get('deposit_amount') is not None or a.get('deposit_pct') is not None): raise ValueError('Use either a mortgage amount or a deposit, not both')
+    if a.get('rate_type') not in ('unknown','tracker','fixed'): raise ValueError('Invalid interest rate type')
+    if a.get('rate_type') == 'fixed' and a.get('fixed_rate_years') is None: raise ValueError('Select the fixed-rate period')
+    if a.get('rate_type') == 'tracker' and a.get('fixed_rate_years') is not None: raise ValueError('Tracker rates do not have a fixed period')
+    if a.get('fixed_rate_years') not in (None,2,3,5,10): raise ValueError('Fixed period must be 2, 3, 5 or 10 years')
+    if a.get('fixed_rate_years') and a['fixed_rate_years'] > a['mortgage_term_years']: raise ValueError('Fixed-rate period cannot exceed the full mortgage term')
+    if a.get('rate_after_fix_pct') is not None and a.get('fixed_rate_years') is None: raise ValueError('A rate after the fix requires a fixed-rate period')
     comps = payload.get("comparables", [])
     if not isinstance(comps, list) or len(comps) > 100:
         raise ValueError("Provide at most 100 comparables")
@@ -229,17 +247,17 @@ def validate_submission(payload):
     if not i['name'] or not i['email'] or not re.fullmatch(r'[^\s@]+@[^\s@]+\.[^\s@]+', i['email']):
         raise ValueError('Enter your name and a valid contact email')
     if not e['terms_accepted']: raise ValueError('Please accept the terms before submitting')
-    if not i['goal']: raise ValueError('Describe your main goal')
     if e['kind'] == 'area': return out
-    for key in ('construction_date', 'finish_quality', 'outdoor_space', 'floor_area_sqm', 'bathrooms', 'off_street_parking'):
-        if p[key] is None or p[key] == '': raise ValueError('Please complete the property details: ' + key.replace('_', ' '))
+    for key in ('property_type', 'bedrooms'):
+        if key not in payload.get('property', {}): raise ValueError('Please complete the property details: ' + key.replace('_', ' '))
     if a['financing'] == 'unknown': raise ValueError('Choose cash or mortgage financing')
     supplied = payload.get('assumptions', {})
     for key in ('buyer_type', 'additional_property', 'nonresident'):
         if key not in supplied: raise ValueError('Complete the buyer details')
     if a['financing'] != 'cash':
-        if not a['mortgage_amount'] or 'interest_rate_pct' not in supplied or 'mortgage_term_years' not in supplied:
-            raise ValueError('Enter the mortgage amount, annual interest rate and term')
+        if not a['mortgage_amount'] and a.get('deposit_amount') is None and a.get('deposit_pct') is None:
+            raise ValueError('Enter a deposit amount or percentage')
         price = a['purchase_price'] or p['asking_price']
-        if price and a['mortgage_amount'] >= price: raise ValueError('Mortgage amount must be less than the purchase price')
+        if price and a.get('mortgage_amount') is not None and a['mortgage_amount'] >= price: raise ValueError('Mortgage amount must be less than the purchase price')
+        if price and a.get('deposit_amount') is not None and a['deposit_amount'] >= price: raise ValueError('Deposit must be less than the purchase price')
     return out
