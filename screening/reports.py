@@ -54,15 +54,14 @@ def cashflow_image(record, path, editor=None):
         y = 204 + idx * 53
         if idx % 2 == 0: d.rectangle((20,y-8,1880,y+43), fill="#edf4f2")
         for _, key, x in cols:
-            val = str(idx+1) if key is None else ("—" if row[key] is None or key == "tax_budget" and m["effective_assumptions"]["annual_tax_budget"] is None else "{:,.0f}".format(row[key]))
-            d.text((x,y), val, fill="#a3342a" if key and row[key] is not None and row[key]<0 else "#18333c", font=font(25))
+            val = str(idx+1) if key is None else ("—" if key == "tax_budget" and m["effective_assumptions"]["annual_tax_budget"] is None else "{:,.0f}".format(row[key]))
+            d.text((x,y), val, fill="#a3342a" if key and row[key]<0 else "#18333c", font=font(25))
     y = 866
     d.line((25,y-12,1875,y-12), fill=editor.style["heading_color"], width=3)
     for _, key, x in cols:
-        val = "Total" if key is None else ("—" if any(r[key] is None for r in m['monthly'][:12]) or key == "tax_budget" and m["effective_assumptions"]["annual_tax_budget"] is None else "{:,.0f}".format(sum(r[key] for r in m["monthly"][:12])))
+        val = "Total" if key is None else ("—" if key == "tax_budget" and m["effective_assumptions"]["annual_tax_budget"] is None else "{:,.0f}".format(sum(r[key] for r in m["monthly"][:12])))
         d.text((x,y), val, fill=editor.style["heading_color"], font=font(25))
     foot = "*Income tax not modelled (—); cash left is BEFORE income tax." if m["effective_assumptions"]["annual_tax_budget"] is None else "*Cash left deducts the supplied tax budget; it is not a tax assessment."
-    if not m['available']: foot='— means not calculated, not zero. '+m['unavailable_reason']
     d.text((35,942), foot, fill="#43575b", font=font(23))
     d.text((35,981), "Amounts rounded for display. Initial acquisition cash is shown separately. Full precision is in the CSV / JSON.", fill="#43575b", font=font(21))
     im.save(str(path), "PNG")
@@ -106,19 +105,17 @@ def calculation_image(record, path, editor=None):
     """Spreadsheet-style working, rendered from the same audited model as the PDF."""
     editor=editor or ReportEditor(record);editor.page=3
     m = record['analysis']; v = m['metrics']; a = m['effective_assumptions']
-    annual=lambda value:None if value is None else value*12
-    net=None if v['stabilised_noi'] is None or v['monthly_debt_payment'] is None else v['stabilised_noi']-v['monthly_debt_payment']*12
     rows = [
-        ('A1', 'SCHEDULED ANNUAL RENT', 'Monthly rent x 12', gbp(annual(v['monthly_rent']))),
+        ('A1', 'SCHEDULED ANNUAL RENT', 'Monthly rent x 12', gbp(v['monthly_rent'] * 12)),
         ('A2', 'NET OPERATING INCOME (NOI)', 'Rent less vacancy and operating costs', gbp(v['stabilised_noi'])),
-        ('A3', 'ANNUAL DEBT SERVICE', 'Monthly mortgage payment x 12', gbp(annual(v['monthly_debt_payment']))),
-        ('A4', 'CASH FLOW BEFORE INCOME TAX', 'NOI less annual debt service', gbp(net)),
+        ('A3', 'ANNUAL DEBT SERVICE', 'Monthly mortgage payment x 12', gbp(v['monthly_debt_payment'] * 12)),
+        ('A4', 'CASH FLOW BEFORE INCOME TAX', 'NOI less annual debt service', gbp(v['stabilised_noi'] - v['monthly_debt_payment'] * 12)),
         ('B1', 'TOTAL PROPERTY COST', 'Price + purchase tax + fees + refurbishment', gbp(v['total_property_cost'])),
         ('B2', 'INITIAL CASH REQUIRED', 'Total cost - loan + finance fees + buffer', gbp(v['cash_required'])),
         ('C1', 'GROSS RENTAL YIELD', 'A1 / purchase price x 100', pct(v['gross_yield_pct'])),
         ('C2', 'NET YIELD ON TOTAL COST', 'A2 / B1 x 100', pct(v['net_yield_on_cost_pct'])),
         ('C3', 'CASH-ON-CASH RETURN', 'A4 / B2 x 100', pct(v['cash_on_cash_pct'])),
-        ('C4', 'DEBT SERVICE COVERAGE', 'A2 / A3', str(v['dscr'])+'x' if v['dscr'] is not None else 'No debt' if v['loan']==0 else 'Not available'),
+        ('C4', 'DEBT SERVICE COVERAGE', 'A2 / A3', str(v['dscr'])+'x' if v['dscr'] is not None else 'No debt'),
         ('D1', 'ANNUAL CAPITAL GROWTH', 'Analyst scenario assumption; not a forecast', pct(a['price_growth_pct'])),
     ]
     im = PILImage.new('RGB', (1900, 1100), 'white'); d = ImageDraw.Draw(im)
@@ -147,7 +144,7 @@ class ReportPages:
         self.ink=colors.HexColor(self.editor.style['heading_color'])
         self.width=A4[0]-90; self.top=A4[1]-48
         self.canvas.setTitle(self.editor.text('Property investment screening','heading')+' - '+record['inputs']['property']['address'])
-        self.canvas.setAuthor(os.getenv('REPORT_BRAND','Lacewing Analytics'))
+        self.canvas.setAuthor(os.getenv('REPORT_BRAND','Property Screening'))
 
     def text(self, value, x, y, width, height, size=9, bold=False, color=INK, kind=None):
         text=self.editor.text(value,kind) if kind else str(value)
@@ -175,7 +172,7 @@ class ReportPages:
         if self.page: self.canvas.showPage()
         self.page+=1; c=self.canvas
         label='DEMO / FICTIONAL' if self.record['mode']=='demo' else 'REVIEWED' if self.final else 'DRAFT / FOR REVIEW'
-        self.text(os.getenv('REPORT_BRAND','Lacewing Analytics'),45,self.top,self.width-160,22,11,True,kind='label')
+        self.text(os.getenv('REPORT_BRAND','Property Screening'),45,self.top,self.width-160,22,11,True,kind='label')
         self.text(label,A4[0]-198,self.top,153,22,9,True,RED if self.record['mode']=='demo' else TEAL)
         c.setStrokeColor(self.accent);c.line(45,self.top-27,A4[0]-45,self.top-27)
         self.text(title,45,self.top-41,self.width,60,min(self.editor.style['heading_size'],18) if len(title)>45 else self.editor.style['heading_size'],True,kind='heading')
@@ -275,13 +272,8 @@ def yield_chart(values, height=155):
 def generate_report(record, folder, final=False):
     from .evidence import matched_profile, property_history
     from .photos import photo_groups
-    if record.get('analysis') is not None and not record['analysis'].get('available'):
-        if final: raise ValueError('Financial results must be completed before approval')
-        if not record['analysis'].get('metrics') or not (record.get('narrative') or {}).get('content',{}).get('purchase_conclusion'):
-            from .report_model import prepare_unavailable
-            prepare_unavailable(record)
     # Upgrade old saved models locally, using their evidence, without API requests.
-    if record.get('analysis', {}).get('version') != 5 or not record.get('analysis', {}).get('horizons'):
+    if record.get('analysis', {}).get('version') != 4 or not record.get('analysis', {}).get('horizons'):
         if record.get('mode') != 'demo':
             raise ValueError('Generate the report again to refresh its calculations and AI conclusions before applying photos or finalizing this older draft.')
         from .finance import analyse
@@ -299,7 +291,7 @@ def generate_report(record, folder, final=False):
     m=record['analysis'];v=m['metrics'];a=m['effective_assumptions'];p=m.get('effective_property',record['inputs']['property']);e=record['evidence'];n=record['narrative']['content'];investor=record['inputs']['investor']
     with csv_path.open('w',newline='',encoding='utf-8-sig') as f:
         w=csv.DictWriter(f,fieldnames=['holding_years']+list(m['monthly'][0]));w.writeheader()
-        schedules = [h for h in m['horizons'] if h['available'] or not m['available']] or [{'years': a['holding_years'], 'monthly': m['monthly']}]
+        schedules = [h for h in m['horizons'] if h['available']] or [{'years': a['holding_years'], 'monthly': m['monthly']}]
         for horizon in schedules:
             for row in horizon['monthly']:
                 item=dict(row,holding_years=horizon['years'])
@@ -311,7 +303,4 @@ def generate_report(record, folder, final=False):
     from .source_report import generate_sources
     source_path=folder/(prefix+'-sources.pdf')
     source_pages=generate_sources(record,source_path)
-    from .internal_report import generate_internal
-    internal_path=folder/(prefix+'-internal.pdf')
-    internal_pages=generate_internal(record,internal_path)
-    return {'pdf':pdf.name,'sources_pdf':source_path.name,'internal_pdf':internal_path.name,'cashflow_png':png.name,'cashflow_csv':csv_path.name,'calculations_png':calc.name,'generated_at':now(),'revision':record['revision'],'final':final,'sources_page_count':source_pages,'internal_page_count':internal_pages,'incomplete':not m['available'],**layout}
+    return {'pdf':pdf.name,'sources_pdf':source_path.name,'cashflow_png':png.name,'cashflow_csv':csv_path.name,'calculations_png':calc.name,'generated_at':now(),'revision':record['revision'],'final':final,'sources_page_count':source_pages,**layout}

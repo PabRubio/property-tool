@@ -138,7 +138,7 @@ class ComparisonTests(unittest.TestCase):
         summary=comparison_summary(inputs(),{'comparables':rows},'asking')
         self.assertEqual(summary['count'],2)
         self.assertEqual(summary['candidates'][-1]['address'],rows[0]['address'])
-        self.assertIn('Bedrooms: 2 vs 6 in subject',summary['candidates'][-1]['limitations'])
+        self.assertIn('Bedroom count differs or is unknown',summary['candidates'][-1]['limitations'])
         self.assertIn('For-sale listing is undated or over 90 days old',summary['candidates'][-1]['limitations'])
         self.assertFalse(any('rent' in reason.lower() for row in summary['candidates'] for reason in row['limitations']))
 
@@ -191,20 +191,17 @@ class ResearchTests(unittest.TestCase):
 
 
 class PDFTests(unittest.TestCase):
-    def test_missing_rent_uses_same_ten_page_layout_and_all_exports(self):
+    def test_missing_rent_delivers_explicitly_incomplete_research(self):
         from screening.incomplete_report import generate_incomplete
         r=record();r['inputs']['assumptions']['monthly_rent']=None
         r['analysis']=analyse(r['inputs'],r['evidence'],'manual')
         content={'summary':{'text':'Research did not establish a usable rent; financial returns remain uncalculated.','source_ids':['model']},
                  'next_steps':[{'text':'Obtain a written whole-property rent opinion from a local letting agent.','source_ids':['model']}]}
-        with tempfile.TemporaryDirectory() as folder,patch('screening.providers.request_json',side_effect=AssertionError('No API call for layout repair')):
+        with tempfile.TemporaryDirectory() as folder,patch.dict('os.environ',{'ANTHROPIC_API_KEY':'test'}),patch('screening.incomplete_report.choose_model',return_value='test'),patch('screening.incomplete_report.call_model',return_value=content):
             artifacts=generate_incomplete(r,'anthropic',folder)
             text=subprocess.check_output(['pdftotext',str(Path(folder)/artifacts['pdf']),'-'],text=True)
-            self.assertTrue(artifacts['incomplete']);self.assertEqual(artifacts['page_count'],10)
-            self.assertIn('cashflow_csv',artifacts);self.assertIn('cashflow_png',artifacts);self.assertIn('calculations_png',artifacts)
-            self.assertIn('Financial results pending',' '.join(text.split()))
-            self.assertIn('Not assessed',' '.join(text.split()))
-            self.assertNotIn('Property evidence — assessment incomplete',text)
+            self.assertTrue(artifacts['incomplete']);self.assertNotIn('cashflow_csv',artifacts)
+            self.assertIn('financial returns remain uncalculated',' '.join(text.split()))
 
     def test_top_five_sales_full_reasoning_and_separate_sources(self):
         r=record();r['evidence']['comparables']=[comp(j) for j in range(8)]

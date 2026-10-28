@@ -81,10 +81,8 @@ def enriched_inputs(inputs, evidence):
     for group in ('property', 'assumptions', 'investor', 'enquiry'):
         out[group] = dict(defaults()[group], **out.get(group, {}))
     for path, source in list(out.get('input_provenance',{}).items()):
-        if path.startswith(('property.','assumptions.')) and source.get('source_id','').startswith('research-'):
-            section,key=path.split('.',1)
-            if key not in defaults()[section]:continue
-            out[section][key] = defaults()[section][key]
+        if path.startswith('property.') and source.get('source_id','').startswith('research-'):
+            out['property'][path.split('.',1)[1]] = defaults()['property'][path.split('.',1)[1]]
             out['input_provenance'].pop(path,None)
     # Research facts fill unknowns only. Preserve client facts and conflicting evidence.
     choices = {'construction_date': ('pre_1914','1914_2000','2000_onwards'), 'epc_rating': tuple('ABCDEFG'),
@@ -92,15 +90,6 @@ def enriched_inputs(inputs, evidence):
                'outdoor_space': ('none','balcony_terrace','garden','garden_very_large')}
     ranges = {'floor_area_sqm': (1,10000), 'bathrooms': (0,5), 'off_street_parking': (0,3), 'lease_years': (0,999)}
     for path, fact in evidence.get('researched_facts', {}).items():
-        if path.startswith('assumptions.'):
-            key=path.split('.',1)[1]
-            permitted={'service_charge','ground_rent','regular_cleaning','turnover_cleaning','fire_safety_upfront','fire_safety_annual','licensing_annual'}
-            value=fact.get('value')
-            provenance=out.get('input_provenance',{}).get(path,{})
-            if key in permitted and (out['assumptions'].get(key) is None or provenance.get('source_id','').startswith('research-')) and isinstance(value,(float,int)) and not isinstance(value,bool) and 0 <= value <= 1000000:
-                out['assumptions'][key]=value
-                out.setdefault('input_provenance',{})[path]={'basis':'Cited applicable cost evidence','source_id':fact['source_ids'][0],'recorded_at':fact['retrieved_at']}
-            continue
         if not path.startswith('property.'): continue
         key = path.split('.',1)[1]; value = fact.get('value')
         valid = value in choices[key] if key in choices else (key in ranges and not isinstance(value,bool) and isinstance(value,(float,int)) and ranges[key][0] <= value <= ranges[key][1])
@@ -168,8 +157,6 @@ def enriched_inputs(inputs, evidence):
                 p['lease_years'] = years
                 out.setdefault('input_provenance', {})['property.lease_years'] = {'basis': 'Unambiguous matched lease; verify with solicitor', 'source_id': source, 'recorded_at': evidence.get('retrieved_at')}
                 break
-    from .assumptions import apply_cost_policy
-    apply_cost_policy(out, evidence)
     return out
 
 
