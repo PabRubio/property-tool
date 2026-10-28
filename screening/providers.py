@@ -82,6 +82,9 @@ def scrub(value):
 
 
 def request_json(url, params=None, headers=None, body=None, timeout=35):
+    import time
+    from .usage import record_response
+    metering_url=url;started=time.monotonic()
     if params:
         url += "?" + urllib.parse.urlencode(params)
     h = {"Accept": "application/json", "User-Agent": "LocalPropertyScreening/1.0"}
@@ -97,13 +100,17 @@ def request_json(url, params=None, headers=None, body=None, timeout=35):
                 raise ValueError("Provider response exceeded 8 MB")
             result = json.loads(data)
     except urllib.error.HTTPError as e:
+        record_response(metering_url,body,elapsed=time.monotonic()-started,error='HTTP '+str(e.code))
         raise ValueError("Provider HTTP %s; check credentials, credits, model access and request inputs" % e.code)
     except (urllib.error.URLError, TimeoutError, OSError):
+        record_response(metering_url,body,elapsed=time.monotonic()-started,error='Connection error')
         raise ValueError("Provider could not be reached or timed out; check the connection and retry")
     except (UnicodeDecodeError, json.JSONDecodeError):
+        record_response(metering_url,body,elapsed=time.monotonic()-started,error='Invalid JSON')
         raise ValueError("Provider returned invalid JSON")
     if not isinstance(result, dict):
         raise ValueError("Unexpected provider response shape")
+    record_response(metering_url,body,result,time.monotonic()-started)
     return result
 
 
@@ -157,6 +164,8 @@ def pd_comparables(raw, kind, source_id=None):
             continue
         sqm = numeric(c.get("sqf"))
         rows.append({"kind": kind, "address": str(c["address"]), "amount": round(amount * multiplier, 2),
+                     "postcode":c.get('postcode'), "uprn":c.get('uprn'),
+                     "latitude":numeric(c.get('latitude')), "longitude":numeric(c.get('longitude')),
                      "date": str(c.get("date", ""))[:10], "source_url": str(c.get("url", "")),
                      "bedrooms": numeric(c.get("bedrooms")), "floor_area_sqm": round(sqm / 10.7639104167, 2) if sqm else None,
                      "distance": numeric(c.get("distance")), "selected": False, "source": "PropertyData / " + {"sold": "Land Registry", "rent": "advertised rent", "asking": "advertised sale"}[kind],
@@ -335,9 +344,9 @@ def gather(inputs, progress=lambda s: None, include_profile=True, public_only=Fa
                 src['detail'] = 'Profile identity could not be matched confidently; facts and history are not used'
                 evidence['errors'].append({'source': name, 'message': src['detail']})
         except Exception as exc:
-            src['status'] = 'error'
             message = scrub(str(exc)) if isinstance(exc, ValueError) else 'Unexpected response; evidence unavailable'
-            evidence['errors'].append({'source': name, 'message': message})
+            src['status'] = 'skipped' if 'Request skipped.' in message else 'error'
+            if src['status'] == 'error':evidence['errors'].append({'source': name, 'message': message})
             src['detail'] = message
         evidence['sources'].append(src)
         progress('Researching: ' + src['title'])

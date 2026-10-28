@@ -9,6 +9,8 @@ from reportlab.lib.pagesizes import A4
 
 def references(record):
     sources=list(record['evidence'].get('sources',[]))
+    from .tax_summary import REFERENCES
+    sources.extend(REFERENCES)
     sources.extend([
         {'id':'room-definition','title':'PropertyData — habitable-room definition','url':'https://propertydata.co.uk/api/documentation/property-types','status':'reference','scope':'Definition, not a room-by-room survey'},
         {'id':'lender-icr','title':'The Mortgage Works — lender-specific income and stress criteria','url':'https://www.themortgageworks.co.uk/intermediaries/lending-criteria/income','status':'reference','scope':'Illustration of lender-specific rules; not applied as automatic eligibility'}])
@@ -30,16 +32,17 @@ class CitationIndex:
         def cite(match):
             labels=[]
             for sid in match.group(1).split(', '):
+                if sid in ('model','inputs','assumptions'):continue
                 source=self.sources.get(sid)
                 if not source:
-                    labels.append(sid);continue
+                    continue
                 key=source.get('url') or sid
                 if key not in self.by_url:
                     entry=dict(source,number=len(self.used)+1);self.used.append(entry);self.by_url[key]=entry
                 entry=self.by_url[key];url=source.get('url','');number=str(entry['number'])
                 label='<a href="'+escape(url,{'"':'&quot;'})+'" color="#19766e">'+number+'</a>' if url.startswith(('https://','http://')) else number
                 if label not in labels:labels.append(label)
-            return '['+', '.join(labels)+']'
+            return '['+', '.join(labels)+']' if labels else ''
         return re.sub(r'\[([a-zA-Z0-9_, -]+)\]',cite,escape(str(text)).replace('\n','<br/>'))
 
 
@@ -63,7 +66,7 @@ def generate_sources(record, path):
     def footer(canvas, doc):
         count[0]=doc.page;canvas.setFont('Helvetica-Bold',16);canvas.drawString(40,A4[1]-43,'Sources & Evidence')
         canvas.setFont('Helvetica',9);canvas.drawString(40,A4[1]-60,record['inputs']['property']['address']+' | revision '+str(record['revision']))
-        intro=Paragraph('Numbered links match the report. [inputs] are supplied statements; [assumptions] are model inputs; [model] means calculated results. Full searches, excerpts and failed-request logs stay in the saved record / JSON export.',small)
+        intro=Paragraph('Numbered links match the report. Supplied facts and modelling assumptions are identified in the report. Detailed research logs and unresolved staff actions are kept in the saved record and separate internal review.',small)
         _,height=intro.wrap(A4[0]-80,50);intro.drawOn(canvas,40,A4[1]-73-height)
         canvas.setFont('Helvetica',8);canvas.drawString(40,28,'Sources & Evidence | '+str(doc.page))
     width=(A4[0]-96)/2;height=A4[1]-174

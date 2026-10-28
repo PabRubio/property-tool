@@ -102,24 +102,26 @@
     $('report-status').textContent=status[1];
     $('report-status').hidden=false;
     const hasPdf=!!record.artifacts?.pdf;
-    const readyForReview=hasPdf&&!!record.analysis?.available;
-    $('draft-controls').hidden=readyForReview;
+    $('draft-controls').hidden=hasPdf;
     $('photo-panel').hidden=!hasPdf;
-    $('run-panel').hidden=area||readyForReview;
+    $('run-panel').hidden=area||hasPdf;
     $('review-approval').hidden=!hasPdf;
-    const missingRent=record.status==='needs_input';
     const failedGeneration=record.status==='error'&&!hasPdf;
     const check=record.preflight;
     const checkMessage=check?.summary?'Submission check: '+check.summary:'';
-    const generationMessage=missingRent?'Essential evidence remains unresolved. The research PDF explains what is missing and the next steps.':failedGeneration?'Report generation could not complete. Check the configured provider and retry.':'';
+    const generationMessage=failedGeneration?'Report generation could not complete. Check the configured provider and retry.':'';
     $('generation-error').textContent=[checkMessage,generationMessage].filter(Boolean).join('\n');
     $('generation-error').hidden=!$('generation-error').textContent;
     $('generation-error').classList.toggle('input-check-clear',!generationMessage&&['clear','running'].includes(check?.status));
     const base='/api/records/'+record.id+'/download/';
+    for(const [id,kind] of [['sources-link','sources_pdf'],['internal-link','internal_pdf']]){
+      $(id).hidden=!record.artifacts?.[kind];
+      if(record.artifacts?.[kind])$(id).href=base+kind;else $(id).removeAttribute('href');
+    }
     const preview=hasPdf?base+'pdf?inline=1&r='+record.revision+'&final='+!!record.approval:'';
     if(preview){if($('pdf-preview').getAttribute('src')!==preview)$('pdf-preview').src=preview;}else $('pdf-preview').removeAttribute('src');
     $('report-pages').textContent=record.artifacts?.page_count?record.artifacts.page_count+' pages':'Saved PDF';
-    $('downloads').innerHTML=hasPdf?`<a class="button" href="${base}pdf">Download ${record.approval?'reviewed':'draft'} PDF</a><a class="button secondary" target="_blank" href="${base}pdf?inline=1">Open PDF</a>${record.artifacts.cashflow_png?`<a class="small" href="${base}cashflow_png">Cash-flow image</a>`:''}${record.artifacts.calculations_png?`<a class="small" href="${base}calculations_png">Calculation sheet</a>`:''}${record.artifacts.sources_pdf?`<a class="button secondary" href="${base}sources_pdf">Sources &amp; Evidence PDF</a>`:''}${record.artifacts.cashflow_csv?`<a class="small" href="${base}cashflow_csv">Full CSV</a>`:''}`:'';
+    $('downloads').innerHTML=hasPdf?`<a class="button" href="${base}pdf">Download ${record.approval?'reviewed':'draft'} PDF</a><a class="button secondary" target="_blank" href="${base}pdf?inline=1">Open PDF</a>${record.artifacts.cashflow_png?`<a class="small" href="${base}cashflow_png">Cash-flow image</a>`:''}${record.artifacts.calculations_png?`<a class="small" href="${base}calculations_png">Calculation sheet</a>`:''}${record.artifacts.cashflow_csv?`<a class="small" href="${base}cashflow_csv">Full CSV</a>`:''}`:'';
     $('revision-result').textContent=revisionResults.get(record.id)||'';
     $('finalize').textContent=record.approval?'Download final PDF':'Approve & finalize';
   }
@@ -143,7 +145,7 @@
     }
     $('record-subtitle').textContent=record.inputs.property.postcode+' · '+(record.inputs.investor.name||'Client');
     $('json-link').href='/api/records/'+record.id+'/download/json';
-    $('generate').textContent=['running','checking_inputs'].includes(record.status)?'Working…':record.artifacts?.pdf?'Regenerate report':'Generate report';
+    $('generate').textContent=['running','checking_inputs'].includes(record.status)?'Working…':'Generate report';
     // Keep submitted text until the server has actually saved the corrections.
     if(additionalNotes.get(record.id)===(record.inputs.analyst_notes??''))additionalNotes.delete(record.id);
     $('additional-info').value=additionalNotes.get(record.id)??record.inputs.analyst_notes??'';
@@ -179,7 +181,7 @@
   async function pipeline(){
     const notes=$('additional-info').value;
     additionalNotes.set(record.id,notes);
-    await post('/api/records/'+record.id+'/pipeline',{revision:record.revision,provider:record.mode==='demo'?'none':config.default_provider||'none',analyst_notes:notes,refresh_evidence:record.status==='needs_input'});
+    await post('/api/records/'+record.id+'/pipeline',{revision:record.revision,provider:record.mode==='demo'?'none':config.default_provider||'none',analyst_notes:notes});
     record=await api('/api/records/'+record.id);render();
   }
   async function savePhotos(){

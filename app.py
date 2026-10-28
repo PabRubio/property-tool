@@ -48,6 +48,7 @@ def provenance(new, old=None, supplied=None):
 
 
 def create_app(data_dir=None):
+    from screening.usage import tracked_worker
     app=Flask(__name__,static_folder=None)
     app.config.update(MAX_CONTENT_LENGTH=112*1024*1024,JSON_SORT_KEYS=False)
     store=Store(data_dir or os.getenv("PROPERTY_DATA_DIR",str(ROOT/"data/records")))
@@ -121,7 +122,7 @@ def create_app(data_dir=None):
     # Relative assets work when index.html is opened directly from disk.
     @app.route("/api/config")
     def config():
-        return jsonify(token=token,defaults=defaults(),default_provider=default_provider(),fields=[dict(zip(("key","label","group","default","min","max"),f)) for f in FIELDS],brand=os.getenv("REPORT_BRAND","Property Screening"),
+        return jsonify(token=token,defaults=defaults(),default_provider=default_provider(),fields=[dict(zip(("key","label","group","default","min","max"),f)) for f in FIELDS],brand=os.getenv("REPORT_BRAND","Lacewing Analytics"),
                        providers={"propertydata":bool(os.getenv("PROPERTYDATA_API_KEY")),"anthropic":bool(os.getenv("ANTHROPIC_API_KEY")),"openai":bool(os.getenv("OPENAI_API_KEY")),"gemini":bool(os.getenv("GEMINI_API_KEY"))})
 
     @app.route("/api/records",methods=["GET","POST"])
@@ -184,6 +185,7 @@ def create_app(data_dir=None):
                 latest['preflight']=dict(result,attempted_at=latest['preflight']['attempted_at'])
                 latest['status']='draft'
                 store.save(latest,'Intake review: '+result['status'])
+        worker=tracked_worker(store.root,r['id'],revision,'submission_check',worker)
         if provider=='none':worker();return store.load(r['id'])
         threading.Thread(target=worker,daemon=True).start()
         return r
@@ -252,15 +254,18 @@ def create_app(data_dir=None):
                 else:
                     if kind == 'pipeline' and r['mode'] != 'demo':
                         from screening.research import research
-                        research(r, provider, progress, refresh=b.get('refresh_evidence') is True)
+                        def checkpoint():
+                            with store.lock:
+                                r['job']=store.load(record_id)['job']
+                                store.save(r)
+                        research(r, provider, progress, refresh=b.get('refresh_evidence') is True, checkpoint=checkpoint, draft_report=True)
                     progress("Calculating cash flow and checking assumptions")
                     r['inputs']=enriched_inputs(r['inputs'],r['evidence'])
                     r["analysis"]=analyse(r["inputs"],r["evidence"],r["mode"])
                     if not r["analysis"]["available"]:
-                        from screening.incomplete_report import generate_incomplete
-                        progress('Explaining the unresolved evidence in a research report')
-                        r['artifacts']=generate_incomplete(r,provider,store.folder(record_id))
-                        r["status"]="needs_input"; message="Research report ready. Essential evidence remains unresolved; financial calculations are withheld."
+                        progress('Building the ten-page report from the available evidence')
+                        r['artifacts']=generate_report(r,store.folder(record_id))
+                        r["status"]="ready_for_review"; message="Draft ready for review"
                     else:
                         progress("Drafting analysis" if provider!="none" else "Assembling the report")
                         r["narrative"]=generate(r,provider,strict=r['mode'] != 'demo')
@@ -273,7 +278,7 @@ def create_app(data_dir=None):
                 message=scrub(str(exc)) if isinstance(exc,ValueError) else "Operation failed (%s). Retry after checking local dependencies and evidence." % type(exc).__name__
                 r.update(status="error",job={"state":"failed","kind":kind,"message":message})
                 store.save(r,kind+" failed")
-        threading.Thread(target=worker,daemon=True).start()
+        threading.Thread(target=tracked_worker(store.root,record_id,r['revision'],kind,worker),daemon=True).start()
         return jsonify(id=record_id,status="running"),202
 
     @app.route("/api/records/<record_id>/gather",methods=["POST"])
@@ -302,11 +307,11 @@ def create_app(data_dir=None):
             store.save(r)
         def worker():
             try:
-                if not original.get('report_document'):
+                if not original.get('report_document') and (original.get('analysis',{}).get('version') == 5 or not original.get('analysis',{}).get('available')):
                     # Older saved reports predate the editable text catalog.
                     with tempfile.TemporaryDirectory(prefix='report-editor-') as preview:
                         generate_report(original,preview)
-                inputs, explanation, changes, presentation, rewrite=plan_revision(original,provider,instruction)
+                inputs, explanation, changes, presentation, rewrite,research_plan=plan_revision(original,provider,instruction)
                 revised=copy.deepcopy(original)
                 revised['inputs']=provenance(inputs,original['inputs'])
                 for change in changes:
@@ -330,24 +335,45 @@ def create_app(data_dir=None):
                 revised.update(revision=original['revision']+1,approval=None,status='ready_for_review')
                 if inputs['property'].get('floor_area_sqm') != original['inputs']['property'].get('floor_area_sqm'):
                     invalidate_size_evidence(revised['evidence'])
+                needs_research=research_plan['requested'] or any(c['section']=='property' and c['key'] in ('address','postcode','uprn') for c in changes)
+                if needs_research and revised['mode'] != 'demo':
+                    from screening.research import research,gaps
+                    def research_progress(message):
+                        with store.lock:
+                            pending=store.load(record_id);pending['job']['message']=message;store.save(pending)
+                    def research_checkpoint():
+                        # Preserve the published draft until the entire replacement
+                        # succeeds, while checkpointing expensive research separately.
+                        with store.lock:
+                            pending=store.load(record_id)
+                            pending['pending_edit_research']=copy.deepcopy(revised['evidence'])
+                            store.save(pending)
+                    questions=[{'id':'review.edit_'+str(j+1),'label':q,'group':'context','provider_result':'Requested through the report editor'} for j,q in enumerate(research_plan['questions'])]
+                    research(revised,provider,research_progress,refresh=research_plan['requested'],checkpoint=research_checkpoint,
+                             extra_gaps=gaps(revised)+questions,draft_report=True)
                 revised['inputs']=enriched_inputs(revised['inputs'],revised['evidence'])
-                upgraded=revised['analysis'].get('version') != 4
-                if changes or upgraded or not revised['analysis'].get('horizons'):revised['analysis']=analyse(revised['inputs'],revised['evidence'],revised['mode'])
-                if not revised['analysis']['available']: raise ValueError('That edit leaves missing financial inputs: '+', '.join(revised['analysis'].get('missing',[])))
+                upgraded=revised['analysis'].get('version') != 5
+                if changes or needs_research or upgraded or not revised['analysis'].get('horizons'):revised['analysis']=analyse(revised['inputs'],revised['evidence'],revised['mode'])
+                if not revised['analysis']['available']:
+                    from screening.report_model import prepare_unavailable
+                    prepare_unavailable(revised)
                 with store.lock:
                     pending=store.load(record_id);pending['job']['message']='Applying your changes and rebuilding the PDF';store.save(pending)
-                if rewrite or changes or upgraded:revised['narrative']=generate(revised,provider,instructions=instruction,strict=True)
+                if rewrite or changes or needs_research or upgraded:revised['narrative']=generate(revised,provider,instructions=instruction,strict=True)
                 revised['artifacts']=generate_report(revised,store.folder(record_id))
-                revised.setdefault('edit_history',[]).append({'at':now(),'request':instruction,'message':explanation,'changes':changes,'presentation':presentation,'rewrite_commentary':rewrite,'revision':revised['revision']})
+                revised.pop('pending_edit_research',None)
+                revised.setdefault('edit_history',[]).append({'at':now(),'request':instruction,'message':explanation,'changes':changes,'presentation':presentation,'rewrite_commentary':rewrite,'research':research_plan,'revision':revised['revision']})
                 revised['job']={'state':'done','kind':'revise','message':'Report updated. '+explanation}
                 with store.lock:
                     atomic_json(store.folder(record_id)/'history'/('revision-%s.json'%original['revision']),original)
                     store.save(revised,'AI edit applied; review reset')
             except Exception as exc:
                 reason=scrub(str(exc)) if isinstance(exc,ValueError) else 'AI edit failed. Check the provider connection and try again.'
+                pending=store.load(record_id).get('pending_edit_research')
+                if pending:original['pending_edit_research']=pending
                 original['job']={'state':'failed','kind':'revise','message':reason+' Existing report kept.'}
                 store.save(original,'AI edit failed; previous report preserved')
-        threading.Thread(target=worker,daemon=True).start()
+        threading.Thread(target=tracked_worker(store.root,record_id,original['revision']+1,'revise',worker),daemon=True).start()
         return jsonify(id=record_id,status='running'),202
 
     @app.route("/api/records/<record_id>/narrative",methods=["PUT"])
@@ -370,7 +396,7 @@ def create_app(data_dir=None):
         with store.lock:
             r=writable(record_id,b)
             if not r.get("analysis",{}) or not r["analysis"].get("available") or not r.get("narrative"): raise ValueError("Generate and review a draft first")
-            if r['analysis'].get('version') != 4 or not r['analysis'].get('horizons'): raise ValueError('Update the draft before finalizing so you can review the updated evidence and projections. Reapply your photos or request a PDF update.')
+            if r['analysis'].get('version') != 5 or not r['analysis'].get('horizons'): raise ValueError('Update the draft before finalizing so you can review the updated evidence and projections. Reapply your photos or request a PDF update.')
             reviewer=string(b.get("reviewer",""),"Reviewer",150)
             if not reviewer or b.get("acknowledged") is not True: raise ValueError("Enter a reviewer name and acknowledge the assumptions, tax exclusions and evidence gaps")
             folder=store.folder(record_id)
@@ -453,7 +479,7 @@ def create_app(data_dir=None):
         r=store.load(record_id)
         if kind=="json":
             response=jsonify(r); response.headers["Content-Disposition"]='attachment; filename="screening-%s.json"' % record_id[:10]; return response
-        if kind not in ("pdf","sources_pdf","cashflow_png","cashflow_csv","calculations_png") or not r.get("artifacts",{}).get(kind): raise FileNotFoundError()
+        if kind not in ("pdf","sources_pdf","internal_pdf","cashflow_png","cashflow_csv","calculations_png") or not r.get("artifacts",{}).get(kind): raise FileNotFoundError()
         return send_from_directory(str(store.folder(record_id)),r["artifacts"][kind],as_attachment=request.args.get("inline")!="1")
 
     return app

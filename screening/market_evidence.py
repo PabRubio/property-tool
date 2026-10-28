@@ -18,8 +18,12 @@ def hydrate_comparables(evidence):
             rows.extend(dict(c, observed_at=observed) for c in pd_comparables(raw, kind, endpoint))
         except (ValueError, TypeError): continue
     unique = {}
+    resolved={(r['kind'],r.get('source_url')):r for r in rows if r.get('research_batch') and r.get('source_url')}
     for row in rows:
         if not row.get('address') or not numeric(row.get('amount')): continue
+        improved=resolved.get((row['kind'],row.get('source_url')))
+        if improved is not None and improved is not row and row.get('amount') == improved.get('amount'):
+            row=dict(row,**{key:value for key,value in improved.items() if value not in (None,'')})
         listing = row.get('source_url', '') if row['kind'] != 'sold' else ''
         key = (row['kind'], address_key(row['address']), row['amount'], row.get('date', ''), listing)
         if key not in unique: unique[key] = dict(row)
@@ -194,7 +198,7 @@ def property_context(inputs, evidence):
     flags = []
     if council.get('data_status') == 'found':
         charge = numeric(council.get('annual_charge'))
-        facts.append({'label': 'Council tax', 'value': 'Band '+str(council.get('band') or 'unknown')+(('; £{:,.0f} / year'.format(charge)) if charge else '')+' — confirm current charge', 'source_id': 'property'})
+        facts.append({'label': 'Council tax', 'value': 'Band '+str(council.get('band') or 'unknown')+(('; £{:,.0f} / year'.format(charge)) if charge else '')+' — provider record', 'source_id': 'property'})
     else: facts.append({'label': 'Council tax', 'value': 'Unavailable'})
     researched_council = evidence.get('researched_facts',{}).get('property.council_tax')
     if researched_council and not council.get('band'):
