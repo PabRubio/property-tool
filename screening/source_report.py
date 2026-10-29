@@ -2,13 +2,29 @@
 from xml.sax.saxutils import escape
 import re
 from urllib.parse import urlparse
-from reportlab.platypus import BaseDocTemplate, PageTemplate, Frame, Paragraph, Spacer, KeepTogether
+from reportlab.platypus import Paragraph, Table
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.pagesizes import A4
 
 
 def references(record):
     sources=list(record['evidence'].get('sources',[]))
+    if record['evidence'].get('location'):
+        from urllib.parse import quote
+        sources.append({'id':'postcode-location','title':'Postcodes.io — postcode location and administrative boundaries',
+                        'url':'https://api.postcodes.io/postcodes/'+quote(record['inputs']['property']['postcode']),
+                        'status':'Postcode area context','retrieved_at':record['evidence'].get('retrieved_at')})
+    from .tax_notes import REFERENCES, VERIFIED_ON
+    sources.extend({'id':sid,'title':title,'url':url,'status':'Government guidance','retrieved_at':VERIFIED_ON} for sid,title,url in REFERENCES)
+    from .comparisons import comparison_summary
+    import hashlib
+    for kind in ('asking','rent','sold'):
+        for row in comparison_summary(record['inputs'],record['evidence'],kind)['candidates'][:5]:
+            for url in row.get('evidence_urls') or [row.get('source_url')]:
+              if url:
+                sources.append({'id':'listing-'+hashlib.sha256(url.encode()).hexdigest()[:12],
+                                'title':row['address'],'url':url,'status':'Sale' if kind=='sold' else 'Observed',
+                                'retrieved_at':row.get('date') if kind=='sold' else row.get('observed_at')})
     sources.extend([
         {'id':'room-definition','title':'PropertyData — habitable-room definition','url':'https://propertydata.co.uk/api/documentation/property-types','status':'reference','scope':'Definition, not a room-by-room survey'},
         {'id':'lender-icr','title':'The Mortgage Works — lender-specific income and stress criteria','url':'https://www.themortgageworks.co.uk/intermediaries/lending-criteria/income','status':'reference','scope':'Illustration of lender-specific rules; not applied as automatic eligibility'}])
@@ -23,8 +39,10 @@ def references(record):
 
 class CitationIndex:
     """Short numbered references, deduplicated by URL, shared by both PDFs."""
-    def __init__(self,record):
-        self.sources={s['id']:s for s in references(record)};self.used=[];self.by_url={}
+    def __init__(self,record,seed=False):
+        self.sources={s['id']:s for s in references(record)}
+        self.used=list(record.get('report_citations',[])) if seed else []
+        self.by_url={s.get('url') or s['id']:s for s in self.used}
 
     def markup(self,text):
         def cite(match):
@@ -45,8 +63,8 @@ class CitationIndex:
 
 def generate_sources(record, path):
     # The client needs a reference list, not the internal research transcript.
-    body=ParagraphStyle('source',fontName='Helvetica',fontSize=9,leading=11)
-    small=ParagraphStyle('metadata',fontName='Helvetica',fontSize=8.5,leading=10.5,textColor='#43575b')
+    body=ParagraphStyle('source',fontName='Helvetica',fontSize=8.2,leading=9.5)
+    small=ParagraphStyle('metadata',fontName='Helvetica',fontSize=7.5,leading=9,textColor='#43575b')
     story=[];sources=record.get('report_citations')
     if sources is None:
         sources=list({s.get('url') or s['id']:s for s in references(record)}.values())
@@ -58,17 +76,38 @@ def generate_sources(record, path):
         if url.startswith(('https://','http://')):heading='<a href="'+escape(url,{'"':'&quot;'})+'" color="#19766e">'+heading+'</a>'
         date=str(source.get('retrieved_at') or '')[:10] or 'date not recorded'
         metadata=(urlparse(url).hostname or 'Supplied reference')+' | '+date+' | '+source.get('status','unverified')
-        story.append(KeepTogether([Paragraph(heading,body),Paragraph(escape(metadata),small),Spacer(1,9)]))
-    count=[0]
-    def footer(canvas, doc):
-        count[0]=doc.page;canvas.setFont('Helvetica-Bold',16);canvas.drawString(40,A4[1]-43,'Sources & Evidence')
-        canvas.setFont('Helvetica',9);canvas.drawString(40,A4[1]-60,record['inputs']['property']['address']+' | revision '+str(record['revision']))
-        intro=Paragraph('Numbered links match the report. [inputs] are supplied statements; [assumptions] are model inputs; [model] means calculated results. Full searches, excerpts and failed-request logs stay in the saved record / JSON export.',small)
-        _,height=intro.wrap(A4[0]-80,50);intro.drawOn(canvas,40,A4[1]-73-height)
-        canvas.setFont('Helvetica',8);canvas.drawString(40,28,'Sources & Evidence | '+str(doc.page))
-    width=(A4[0]-96)/2;height=A4[1]-174
-    doc=BaseDocTemplate(str(path),pagesize=A4,leftMargin=40,rightMargin=40,topMargin=129,bottomMargin=45)
-    doc.addPageTemplates(PageTemplate(id='references',frames=[Frame(40,45,width,height,leftPadding=0,rightPadding=0,topPadding=0,bottomPadding=0),Frame(56+width,45,width,height,leftPadding=0,rightPadding=0,topPadding=0,bottomPadding=0)],onPage=footer))
+        entry=Table([[Paragraph(heading,body)],[Paragraph(escape(metadata),small)]],colWidths=[(A4[0]-100)/2],
+                    style=[('LEFTPADDING',(0,0),(-1,-1),0),('RIGHTPADDING',(0,0),(-1,-1),0),
+                           ('TOPPADDING',(0,0),(-1,-1),0),('BOTTOMPADDING',(0,0),(-1,-1),0)])
+        entry.spaceAfter=3;story.append(entry)
     if not story:story=[Paragraph('No external references were cited.',body)]
-    doc.build(story)
-    return count[0]
+    single_page(record,path,'Sources & Evidence',story,'Numbered links match both PDFs. [inputs]: supplied statements; [assumptions]: model inputs; [model]: calculations.')
+    return 1
+
+
+def single_page(record,path,title,story,intro):
+    """Measure two fixed columns before publishing; never spill to a second page."""
+    import io
+    from pathlib import Path
+    from reportlab.pdfgen import canvas
+    width=(A4[0]-100)/2
+    measured=[(item,item.wrap(width,700)[1]+item.getSpaceAfter()) for item in story]
+    # Balanced columns, keeping individual paragraphs intact.
+    split=min(range(len(measured)+1),key=lambda n:max(sum(h for _,h in measured[:n]),sum(h for _,h in measured[n:])))
+    columns=[measured[:split],measured[split:]]
+    small=ParagraphStyle('intro',fontName='Helvetica',fontSize=8,leading=10,textColor='#43575b')
+    subtitle=Paragraph(escape(record['inputs']['property']['address']+' | revision '+str(record['revision']))+'<br/>'+escape(intro),small)
+    _,height=subtitle.wrap(A4[0]-80,100);top=A4[1]-92-height
+    if max(sum(h for _,h in col) for col in columns)>top-45:
+        raise ValueError(title+' exceeds its one-page layout. Shorten the internal wording / reference titles; previous report kept.')
+    stream=io.BytesIO();pdf=canvas.Canvas(stream,pagesize=A4)
+    pdf.setTitle('Lacewing Analytics — '+title);pdf.setAuthor('Lacewing Analytics')
+    pdf.setFillColorRGB(.094,.2,.235);pdf.setFont('Helvetica-Bold',10);pdf.drawString(40,A4[1]-35,'Lacewing Analytics')
+    pdf.setFont('Helvetica-Bold',18);pdf.drawString(40,A4[1]-62,title)
+    subtitle.drawOn(pdf,40,A4[1]-77-height)
+    for number,col in enumerate(columns):
+        y=top
+        for item,height in col:
+            item.drawOn(pdf,40+number*(width+20),y-height+item.getSpaceAfter());y-=height
+    pdf.setFont('Helvetica',8);pdf.drawString(40,28,title+' | 1 / 1')
+    pdf.save();Path(path).write_bytes(stream.getvalue())

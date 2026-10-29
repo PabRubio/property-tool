@@ -10,6 +10,7 @@ from .market_evidence import (hydrate_comparables, regional_rent_growth, growth_
                               annualised, sample_context, demand_context, property_context)
 from .schema import api_property_type
 from .providers import numeric
+from .modelling import effective_defaults, works_value
 
 ROOT = Path(__file__).resolve().parent.parent
 TAX = json.loads((ROOT / "config/tax_rules.json").read_text())
@@ -143,14 +144,13 @@ def analyse(inputs, evidence, mode, include_horizons=True):
     from .comparisons import comparison_summary
     hydrate_comparables(evidence)
     inputs = enriched_inputs(inputs, evidence)
-    p, i, a = inputs["property"], inputs["investor"], copy.deepcopy(inputs["assumptions"])
+    p, i = inputs["property"], inputs["investor"]
+    a, modelling_basis, strategy = effective_defaults(inputs)
     flags = []
     def flag(level, title, detail):
         flags.append({"level": level, "title": title, "detail": detail})
     if inputs.get('enquiry', {}).get('kind') == 'area':
         return {'available': False, 'flags': [], 'missing': ['specific_property']}
-    if a['financing'] == 'unknown':
-        return {'available': False, 'flags': [{'level':'critical','title':'Financing is not supplied','detail':'Specify cash, or mortgage amount, type and rate.'}], 'missing':['financing']}
     if a['financing'] == 'mortgage_unsure':
         a['financing'] = 'interest_only'
         flag('critical', 'Mortgage repayment type unconfirmed', 'Interest-only is used as an explicit modelling assumption. Repayment borrowing would reduce cash flow; confirm the loan product.')
@@ -188,8 +188,6 @@ def analyse(inputs, evidence, mode, include_horizons=True):
         if evidence.get('market', {}).get('rent_bedroom_filter_omitted'):
             rent_basis += ' across all bedroom counts; not a matched %s-bedroom estimate' % p['bedrooms']
         flag("critical", "Rent is based only on the local average", "Obtain matched rental comparables or an agent opinion before relying on this figure.")
-    if rent is None:
-        return {"available": False, "flags": [{"level": "critical", "title": "A rent estimate is required", "detail": "Enter monthly rent, select rental comparables, or gather live evidence."}], "missing": ["monthly_rent"]}
     price = a["purchase_price"] if a["purchase_price"] is not None else p["asking_price"]
     price_basis = 'Client / analyst purchase price' if a['purchase_price'] is not None else 'Client-supplied listing / offer price'
     if price is None:
@@ -198,11 +196,14 @@ def analyse(inputs, evidence, mode, include_horizons=True):
         if price is None and sales_evidence['median']:
             price = sales_evidence['median']
             price_basis = 'Illustrative purchase at the median of matched completed-sale comparisons; no asking or agreed price supplied'
-        if price is None:
-            return {'available': False, 'flags': [{'level':'critical','title':'Purchase price unavailable','detail':'No supplied price or usable property valuation. Supply a proposed purchase price.'}], 'missing':['purchase_price']}
         flag('critical', 'Purchase price is a valuation scenario', 'There is no known listing or agreed price; returns use an automated estimate as the purchase assumption.')
-    if a.get('mortgage_amount') is not None and a['financing'] != 'cash' and a['mortgage_amount'] >= price:
-        return {'available': False, 'flags': [{'level':'critical','title':'Mortgage exceeds purchase assumption','detail':'Review the mortgage amount and purchase price.'}], 'missing':['mortgage_amount']}
+    missing = [key for key, value in [('monthly_rent', rent), ('purchase_price', price)] if value is None]
+    if a['financing'] == 'unknown': missing.append('financing')
+    if price and a.get('mortgage_amount') is not None and a['financing'] != 'cash' and a['mortgage_amount'] >= price: missing.append('mortgage_amount')
+    if a['refurb_level'] != 'none' and a['refurbishment'] is None and refurbishment_estimate(evidence) is None: missing.append('refurbishment')
+    if missing:
+        from .partial_analysis import partial_analysis
+        return partial_analysis(inputs, evidence, a, modelling_basis, strategy, price, rent, price_basis, rent_basis, missing)
     a["monthly_rent"], a["purchase_price"] = rent, price
     current_value = sale_valuation or price
     value_basis = 'Property-specific sale valuation [valuation-sale]' if sale_valuation else 'Purchase price used as a proxy because no property-specific sale valuation is available'
@@ -238,7 +239,7 @@ def analyse(inputs, evidence, mode, include_horizons=True):
             flag('warning', 'Rent-growth evidence unavailable', regional_rent['reason']+'. Cash flows use an explicit no-growth fallback until evidence or an analyst assumption is supplied.')
     no_refurbishment = a['refurb_level'] == 'none'
     reference_refurb = None if no_refurbishment else refurbishment_estimate(evidence)
-    planned = a.get('refurbishment_planned', False) or (a.get('refurbishment') or 0) > 0
+    planned = not no_refurbishment
     if planned and not context['planning']['requested']:
         flag('warning', 'Planning context has not been researched', 'Works are planned. Review the local authority records and required consents; saved evidence contains no planning search.')
     refurb_basis = 'No works planned; reference estimate is excluded from investment costs'
@@ -252,13 +253,15 @@ def analyse(inputs, evidence, mode, include_horizons=True):
             refurb_basis = 'Unknown: planned works excluded until priced'
     else: a['refurbishment'] = 0
     a['refurbishment'] = a['refurbishment'] or 0
+    uplift = works_value(a, current_value, evidence)
+    projection_value = uplift['after_works_value']
     if p['property_type'] in ('bungalow', 'converted_flat', 'studio'):
         flag('warning', 'Valuation uses a broader property category', 'Provider model uses '+api_property_type(p).replace('_',' ')+'; check comparables for this specific subtype.')
     if a["financing"] == "cash":
         a["mortgage_fees"] = 0
     sdlt = stamp_duty(price, a)
     refurb = a["refurbishment"] * (1 + a["contingency_pct"] / 100)
-    acquisition = sdlt["total"] + a["legal_fees"] + a["survey_fees"] + a["other_purchase_costs"]
+    acquisition = sdlt["total"] + a["legal_fees"] + a["survey_fees"] + a["other_purchase_costs"] + a['safety_upfront']
     project_cost = price + acquisition + refurb
     rows, loan, debt = project(a, price, rent)
     a['ltv_pct'] = loan/price*100 if loan else 0
@@ -274,7 +277,7 @@ def analyse(inputs, evidence, mode, include_horizons=True):
         yr = rows[(y - 1) * 12:y * 12]
         ann = {k: money(sum(r[k] for r in yr)) for k in sums}
         ann.update(year=y, loan_balance=money(yr[-1]["loan_balance"]), cumulative_cashflow=money(yr[-1]["cumulative_cashflow"]),
-                   property_value=money(current_value * (1 + a["price_growth_pct"] / 100) ** y))
+                   property_value=money(projection_value * (1 + a["price_growth_pct"] / 100) ** y))
         annuals.append(ann)
     sale_price = annuals[-1]["property_value"]
     sale_costs = sale_price * a["selling_fee_pct"] / 100 + a["sale_legal_fees"] + a["early_repayment_fee"]
@@ -321,8 +324,6 @@ def analyse(inputs, evidence, mode, include_horizons=True):
     tests = [
         {"label": "Net yield on total cost", "target": a["min_net_yield_pct"], "actual": net_yield, "unit": "%", "passes": stable_noi / project_cost * 100 >= a["min_net_yield_pct"]},
         {"label": "Monthly cash flow before income tax", "target": a["min_monthly_cashflow"], "actual": metrics["monthly_cashflow_before_tax"], "unit": "GBP", "passes": stable_cash / 12 >= a["min_monthly_cashflow"]}]
-    if i["cash_budget"] is not None:
-        tests.append({"label": "Cash needed within investor budget", "target": i["cash_budget"], "actual": money(cash_required+additional_funding), "unit": "GBP", "passes": cash_required+additional_funding <= i["cash_budget"]})
     if mode == "demo":
         flag("critical", "Demonstration only", "All example evidence is fictional. This report must not be used to assess a real property.")
     if not evidence.get("country_verified"):
@@ -332,13 +333,13 @@ def analyse(inputs, evidence, mode, include_horizons=True):
     if p["tenure"] != "freehold":
         for key, label in [("service_charge", "Service charge"), ("ground_rent", "Ground rent")]:
             if a[key] is None:
-                flag("critical", label + " is unknown", "Temporarily modelled at £0; returns may be overstated. Obtain current charges and planned major works.")
+                flag("critical", label + " is unknown", "Excluded from budget totals, not established as zero. Returns are conditional on the unpriced charges and major works.")
         if p["lease_years"] is None:
             flag("critical", "Lease length is unknown", "Obtain the remaining lease length and extension terms.")
         elif p["lease_years"] < 85:
             flag("warning", "Lease requires specialist review", "The remaining term may affect lender availability and extension costs; the model includes no extension quote.")
     elif a["service_charge"] is None:
-        flag("warning", "Estate / service charges not confirmed", "Modelled at £0 for now. Confirm whether this freehold property has estate or management charges.")
+        flag("warning", "Estate / service charges not confirmed", "Unpriced charges are excluded, not established as zero; returns remain conditional on any estate or management charges.")
     if api_property_type(p) == "flat" and p["cladding_status"] in ("unknown", "concern"):
         flag("critical", "Building safety needs review", "Obtain applicable fire safety / cladding evidence and confirm lender requirements.")
     if p["epc_rating"] == "unknown":
@@ -402,7 +403,11 @@ def analyse(inputs, evidence, mode, include_horizons=True):
         verdict = "Provisional — material evidence gaps" if mode != "demo" else "DEMO — fictional example"
     profile = matched_profile({'inputs': inputs, 'evidence': evidence})
     profile_estimate = numeric(profile.get('estimate', {}).get('estimate'))
-    model = {"available": True, "version": 4, "metrics": metrics, "rent_basis": rent_basis, "effective_assumptions": a,
+    model = {"available": True, "version": 5, "metrics": metrics, "rent_basis": rent_basis, "effective_assumptions": a,
+            "modelling_basis": modelling_basis, "letting_strategy": strategy, "refurbishment_value": uplift,
+            "funding": {"cash_required":money(cash_required), "additional_cash_needed":money(additional_funding), "cash_available":i['cash_budget'],
+                        "initial_shortfall":money(max(0,cash_required-i['cash_budget'])) if i['cash_budget'] is not None else None,
+                        "shortfall":money(max(0,cash_required+additional_funding-i['cash_budget'])) if i['cash_budget'] is not None else None},
             "rental_evidence": rental_evidence, "sales_evidence": sales_evidence,
             "effective_property": p, "price_basis": price_basis, "price_growth_basis": price_growth_basis,
             "starting_value": current_value, "value_basis": value_basis,

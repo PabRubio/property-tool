@@ -121,7 +121,7 @@ def create_app(data_dir=None):
     # Relative assets work when index.html is opened directly from disk.
     @app.route("/api/config")
     def config():
-        return jsonify(token=token,defaults=defaults(),default_provider=default_provider(),fields=[dict(zip(("key","label","group","default","min","max"),f)) for f in FIELDS],brand=os.getenv("REPORT_BRAND","Property Screening"),
+        return jsonify(token=token,defaults=defaults(),default_provider=default_provider(),fields=[dict(zip(("key","label","group","default","min","max"),f)) for f in FIELDS],brand="Lacewing Analytics",
                        providers={"propertydata":bool(os.getenv("PROPERTYDATA_API_KEY")),"anthropic":bool(os.getenv("ANTHROPIC_API_KEY")),"openai":bool(os.getenv("OPENAI_API_KEY")),"gemini":bool(os.getenv("GEMINI_API_KEY"))})
 
     @app.route("/api/records",methods=["GET","POST"])
@@ -136,7 +136,7 @@ def create_app(data_dir=None):
             r=start_preflight(r)
         return jsonify(r),201
 
-    def save_corrected_inputs(r,new,reason="Inputs changed; approval and outputs invalidated",invalidate=True):
+    def save_corrected_inputs(r,new,reason="Inputs changed; approval and outputs invalidated",invalidate=True,persist=True):
         query_keys=("address","postcode","property_type","bedrooms","uprn","building_attachment","new_build","tenure")
         query_changed=any(new["property"].get(k)!=r["inputs"]["property"].get(k,defaults()["property"][k]) for k in query_keys)
         avm_keys=("floor_area_sqm","construction_date","finish_quality","outdoor_space","bathrooms","off_street_parking")
@@ -153,6 +153,7 @@ def create_app(data_dir=None):
                 r["evidence"].get("raw",{}).pop(endpoint,None)
             r["evidence"]["sources"]=[s for s in r["evidence"].get("sources",[]) if not s["id"].startswith("valuation-") and s['id']!='build-cost']
         if any(new['assumptions'].get(k)!=r['inputs']['assumptions'].get(k,defaults()['assumptions'][k]) for k in ('refurb_level','refurb_finish')):
+            r['evidence'].get('researched_facts',{}).pop('assumptions.after_works_value',None)
             r['evidence'].get('market',{}).pop('build-cost',None)
             r['evidence'].get('raw',{}).pop('build-cost',None)
             r['evidence']['sources']=[s for s in r['evidence'].get('sources',[]) if s['id']!='build-cost']
@@ -160,7 +161,7 @@ def create_app(data_dir=None):
             invalidate_size_evidence(r['evidence'])
         r["inputs"]=new
         if invalidate:r['status']='needs_follow_up' if new['enquiry']['kind']=='area' else 'draft'
-        store.save(r,None if invalidate else reason)
+        if persist:store.save(r,None if invalidate else reason)
         return r
 
     def start_preflight(r):
@@ -211,10 +212,14 @@ def create_app(data_dir=None):
             if kind=="gather" and not os.getenv("PROPERTYDATA_API_KEY"): raise ValueError("Add PROPERTYDATA_API_KEY to .env and restart the server")
             analyst_notes=string(b.get("analyst_notes",r["inputs"].get("analyst_notes","")),"Additional information")
             apply_notes=r['mode']!='demo' and analyst_notes!=r['inputs'].get('analyst_notes','')
-            store.invalidate(r,"Started "+kind)
+            original=copy.deepcopy(r)
+            r=copy.deepcopy(r)
+            r.update(revision=r['revision']+1,approval=None)
             if not apply_notes:r["inputs"]["analyst_notes"]=analyst_notes
             r.update(status="running",job={"state":"running","kind":kind,"message":"Starting "+kind})
-            store.save(r)
+            pending=copy.deepcopy(original)
+            pending.update(status='running',job=r['job'])
+            store.save(pending)
         def progress(message):
             with store.lock:
                 live=store.load(record_id); live["job"]["message"]=message; store.save(live)
@@ -229,9 +234,8 @@ def create_app(data_dir=None):
                         changes=[];change_message='Additional information cleared.'
                     new=provenance(new,r['inputs'],supplied={g:{c['key']:c['value'] for c in changes if c['section']==g} for g in ('property','assumptions','investor')})
                     with store.lock:
-                        save_corrected_inputs(r,new,'Applied additional information: '+change_message,invalidate=False)
+                        save_corrected_inputs(r,new,'Applied additional information: '+change_message,invalidate=False,persist=False)
                         r['input_corrections']={'at':now(),'message':change_message,'changes':changes}
-                        store.save(r)
                 if kind=="pipeline" and r['mode']!='demo':
                     evidence=r.get('evidence',{})
                     try:
@@ -268,11 +272,13 @@ def create_app(data_dir=None):
                         r["artifacts"]=generate_report(r,store.folder(record_id))
                         r["status"]="ready_for_review"; message="Draft ready for review"
                 r["job"]={"state":"done","kind":kind,"message":message}
+                atomic_json(store.folder(record_id)/'history'/('revision-%s.json'%original['revision']),original)
                 store.save(r,kind+" completed")
             except Exception as exc:
                 message=scrub(str(exc)) if isinstance(exc,ValueError) else "Operation failed (%s). Retry after checking local dependencies and evidence." % type(exc).__name__
-                r.update(status="error",job={"state":"failed","kind":kind,"message":message})
-                store.save(r,kind+" failed")
+                original.update(job={"state":"failed","kind":kind,"message":message+' Existing report kept.'})
+                if not original.get('artifacts'):original['status']='error'
+                store.save(original,kind+" failed; previous report preserved")
         threading.Thread(target=worker,daemon=True).start()
         return jsonify(id=record_id,status="running"),202
 
@@ -324,6 +330,7 @@ def create_app(data_dir=None):
                         revised['evidence'].get('raw',{}).pop(endpoint,None)
                     revised['evidence']['sources']=[s for s in revised['evidence'].get('sources',[]) if not s['id'].startswith('valuation-') and s['id']!='build-cost']
                 if any(inputs['assumptions'].get(k)!=original['inputs']['assumptions'].get(k,defaults()['assumptions'][k]) for k in ('refurb_level','refurb_finish')):
+                    revised['evidence'].get('researched_facts',{}).pop('assumptions.after_works_value',None)
                     revised['evidence'].get('market',{}).pop('build-cost',None)
                     revised['evidence'].get('raw',{}).pop('build-cost',None)
                     revised['evidence']['sources']=[s for s in revised['evidence'].get('sources',[]) if s['id']!='build-cost']
@@ -331,13 +338,16 @@ def create_app(data_dir=None):
                 if inputs['property'].get('floor_area_sqm') != original['inputs']['property'].get('floor_area_sqm'):
                     invalidate_size_evidence(revised['evidence'])
                 revised['inputs']=enriched_inputs(revised['inputs'],revised['evidence'])
-                upgraded=revised['analysis'].get('version') != 4
+                upgraded=revised['analysis'].get('version') != 5
                 if changes or upgraded or not revised['analysis'].get('horizons'):revised['analysis']=analyse(revised['inputs'],revised['evidence'],revised['mode'])
-                if not revised['analysis']['available']: raise ValueError('That edit leaves missing financial inputs: '+', '.join(revised['analysis'].get('missing',[])))
                 with store.lock:
                     pending=store.load(record_id);pending['job']['message']='Applying your changes and rebuilding the PDF';store.save(pending)
-                if rewrite or changes or upgraded:revised['narrative']=generate(revised,provider,instructions=instruction,strict=True)
-                revised['artifacts']=generate_report(revised,store.folder(record_id))
+                if not revised['analysis']['available']:
+                    from screening.incomplete_report import generate_incomplete
+                    revised['artifacts']=generate_incomplete(revised,provider,store.folder(record_id));revised['status']='needs_input'
+                else:
+                    if rewrite or changes or upgraded:revised['narrative']=generate(revised,provider,instructions=instruction,strict=True)
+                    revised['artifacts']=generate_report(revised,store.folder(record_id))
                 revised.setdefault('edit_history',[]).append({'at':now(),'request':instruction,'message':explanation,'changes':changes,'presentation':presentation,'rewrite_commentary':rewrite,'revision':revised['revision']})
                 revised['job']={'state':'done','kind':'revise','message':'Report updated. '+explanation}
                 with store.lock:
@@ -359,7 +369,8 @@ def create_app(data_dir=None):
             content=validate_content(b.get("content"),allowed_sources(r))
             # Copy before invalidation to retain calculations and provenance.
             model=r["analysis"]; narrative=r["narrative"]
-            store.invalidate(r,"Analyst edited narrative; review reset")
+            original=copy.deepcopy(r)
+            r.update(revision=r['revision']+1,approval=None)
             r["analysis"]=model; r["narrative"]=dict(narrative,content=content,edited_by_analyst_at=now())
             r["artifacts"]=generate_report(r,store.folder(record_id)); r["status"]="ready_for_review"; store.save(r)
         return jsonify(r)
@@ -370,7 +381,7 @@ def create_app(data_dir=None):
         with store.lock:
             r=writable(record_id,b)
             if not r.get("analysis",{}) or not r["analysis"].get("available") or not r.get("narrative"): raise ValueError("Generate and review a draft first")
-            if r['analysis'].get('version') != 4 or not r['analysis'].get('horizons'): raise ValueError('Update the draft before finalizing so you can review the updated evidence and projections. Reapply your photos or request a PDF update.')
+            if r['analysis'].get('version') != 5 or not r['analysis'].get('horizons'): raise ValueError('Update the draft before finalizing so you can review the updated evidence and projections. Reapply your photos or request a PDF update.')
             reviewer=string(b.get("reviewer",""),"Reviewer",150)
             if not reviewer or b.get("acknowledged") is not True: raise ValueError("Enter a reviewer name and acknowledge the assumptions, tax exclusions and evidence gaps")
             folder=store.folder(record_id)
@@ -430,9 +441,9 @@ def create_app(data_dir=None):
                 revised.update(revision=r['revision']+1,approval=None,artifacts={},status='draft')
                 revised.pop('job',None)
                 # Reuse the existing calculations and approved wording. Photo changes need no API calls.
-                if revised.get('analysis') and revised['analysis'].get('available') and revised.get('narrative'):
+                if revised.get('analysis') and revised.get('narrative'):
                     revised['artifacts']=generate_report(revised,store.folder(record_id))
-                    revised['status']='ready_for_review'
+                    revised['status']='ready_for_review' if revised['analysis']['available'] else 'needs_input'
                 revised['job']={'state':'done','kind':'photos','message':'Photos added to the PDF.' if revised['artifacts'] else 'Photos saved for the report.'}
                 atomic_json(store.folder(record_id)/'history'/('revision-%s.json'%r['revision']),r)
                 store.save(revised,'Property photos updated; delivery review reset')
@@ -453,7 +464,7 @@ def create_app(data_dir=None):
         r=store.load(record_id)
         if kind=="json":
             response=jsonify(r); response.headers["Content-Disposition"]='attachment; filename="screening-%s.json"' % record_id[:10]; return response
-        if kind not in ("pdf","sources_pdf","cashflow_png","cashflow_csv","calculations_png") or not r.get("artifacts",{}).get(kind): raise FileNotFoundError()
+        if kind not in ("pdf","sources_pdf","internal_review_pdf","cashflow_png","cashflow_csv","calculations_png") or not r.get("artifacts",{}).get(kind): raise FileNotFoundError()
         return send_from_directory(str(store.folder(record_id)),r["artifacts"][kind],as_attachment=request.args.get("inline")!="1")
 
     return app

@@ -11,7 +11,7 @@ from test_intake import brief
 from screening.schema import validate_submission
 from screening.finance import analyse, project, payment
 from screening.comparisons import comparison_summary, months_ago, recent_sale
-from screening.research import apply_findings, web_search, research
+from screening.research import apply_findings, web_search, research, gaps
 from screening.evidence import enriched_inputs
 from screening.narrative import deterministic, generate, validate_figures
 from screening.reports import generate_report
@@ -137,13 +137,25 @@ class ComparisonTests(unittest.TestCase):
         rows[0].update(bedrooms=2,distance=3,observed_at=None,date=None)
         summary=comparison_summary(inputs(),{'comparables':rows},'asking')
         self.assertEqual(summary['count'],2)
-        self.assertEqual(summary['candidates'][-1]['address'],rows[0]['address'])
+        self.assertEqual(summary['candidates'][-1]['address'],rows[0]['address']+', '+rows[0]['postcode'])
         self.assertIn('Bedroom count differs or is unknown',summary['candidates'][-1]['limitations'])
         self.assertIn('For-sale listing is undated or over 90 days old',summary['candidates'][-1]['limitations'])
         self.assertFalse(any('rent' in reason.lower() for row in summary['candidates'] for reason in row['limitations']))
 
 
 class ResearchTests(unittest.TestCase):
+    def test_nearby_places_requested_and_cited_postcode_context_required(self):
+        r=record();requested=[g for g in gaps(r) if g['id']=='property.nearby_places']
+        self.assertEqual(len(requested),1)
+        finding=dict(self.finding(),gap_id='property.nearby_places',scope='area',matched_address='',
+                     value_json='"Example Park has a public entrance on Example Road."')
+        accepted=apply_findings(r,requested,self.result(),{'findings':[finding]},1)
+        self.assertEqual(accepted[0]['status'],'supported')
+        self.assertIn('Example Park',r['evidence']['researched_facts']['property.nearby_places']['text'])
+        for changes in ({'matched_postcode':'M2 2AA'},{'source_ids':['invented']}):
+            rejected=apply_findings(record(),requested,self.result(),{'findings':[dict(finding,**changes)]},1)
+            self.assertEqual(rejected[0]['status'],'inconclusive')
+
     def result(self):
         return {'sources':[{'id':'web-1','url':'https://council.gov.uk/map','title':'Official map','support':['Boundary record']}], 'text':'Evidence','queries':['map'],'errors':[]}
 

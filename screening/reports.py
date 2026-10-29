@@ -110,7 +110,7 @@ def calculation_image(record, path, editor=None):
         ('A2', 'NET OPERATING INCOME (NOI)', 'Rent less vacancy and operating costs', gbp(v['stabilised_noi'])),
         ('A3', 'ANNUAL DEBT SERVICE', 'Monthly mortgage payment x 12', gbp(v['monthly_debt_payment'] * 12)),
         ('A4', 'CASH FLOW BEFORE INCOME TAX', 'NOI less annual debt service', gbp(v['stabilised_noi'] - v['monthly_debt_payment'] * 12)),
-        ('B1', 'TOTAL PROPERTY COST', 'Price + purchase tax + fees + refurbishment', gbp(v['total_property_cost'])),
+        ('B1', 'TOTAL PROPERTY COST', 'Price + tax + fees + safety + refurbishment', gbp(v['total_property_cost'])),
         ('B2', 'INITIAL CASH REQUIRED', 'Total cost - loan + finance fees + buffer', gbp(v['cash_required'])),
         ('C1', 'GROSS RENTAL YIELD', 'A1 / purchase price x 100', pct(v['gross_yield_pct'])),
         ('C2', 'NET YIELD ON TOTAL COST', 'A2 / B1 x 100', pct(v['net_yield_on_cost_pct'])),
@@ -270,10 +270,24 @@ def yield_chart(values, height=155):
 
 
 def generate_report(record, folder, final=False):
+    """Publish an entire artifact set only after all three PDFs render successfully."""
+    import copy
+    import tempfile
+    folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
+    staged=copy.deepcopy(record)
+    with tempfile.TemporaryDirectory(prefix='.report-',dir=str(folder)) as stage:
+        artifacts=_generate_report(staged,Path(stage),final,photo_folder=folder)
+        for key in ('pdf','sources_pdf','internal_review_pdf','cashflow_png','cashflow_csv','calculations_png'):
+            if artifacts.get(key):os.replace(str(Path(stage)/artifacts[key]),str(folder/artifacts[key]))
+    record.update(staged)
+    return artifacts
+
+
+def _generate_report(record, folder, final=False, photo_folder=None):
     from .evidence import matched_profile, property_history
     from .photos import photo_groups
     # Upgrade old saved models locally, using their evidence, without API requests.
-    if record.get('analysis', {}).get('version') != 4 or not record.get('analysis', {}).get('horizons'):
+    if record.get('analysis', {}).get('version') != 5 or not record.get('analysis', {}).get('horizons'):
         if record.get('mode') != 'demo':
             raise ValueError('Generate the report again to refresh its calculations and AI conclusions before applying photos or finalizing this older draft.')
         from .finance import analyse
@@ -284,12 +298,15 @@ def generate_report(record, folder, final=False):
         if not record['analysis']['available']: raise ValueError('Missing report inputs: '+', '.join(record['analysis'].get('missing', [])))
         record['narrative'] = deterministic(record, 'Demo report model upgraded using saved evidence')
     folder=Path(folder);folder.mkdir(parents=True,exist_ok=True)
-    prefix='r%s-%s'%(record['revision'],'reviewed' if final else 'draft')
+    import secrets
+    prefix='r%s-%s-%s'%(record['revision'],'reviewed' if final else 'draft',secrets.token_hex(4))
     pdf,png,csv_path,calc=[folder/(prefix+s) for s in ('.pdf','-cashflow.png','-cashflow.csv','-calculations.png')]
     editor=ReportEditor(record)
-    cashflow_image(record,png,editor);calculation_image(record,calc,editor)
+    complete=record['analysis']['available']
+    if complete:cashflow_image(record,png,editor);calculation_image(record,calc,editor)
     m=record['analysis'];v=m['metrics'];a=m['effective_assumptions'];p=m.get('effective_property',record['inputs']['property']);e=record['evidence'];n=record['narrative']['content'];investor=record['inputs']['investor']
-    with csv_path.open('w',newline='',encoding='utf-8-sig') as f:
+    if complete:
+      with csv_path.open('w',newline='',encoding='utf-8-sig') as f:
         w=csv.DictWriter(f,fieldnames=['holding_years']+list(m['monthly'][0]));w.writeheader()
         schedules = [h for h in m['horizons'] if h['available']] or [{'years': a['holding_years'], 'monthly': m['monthly']}]
         for horizon in schedules:
@@ -298,9 +315,14 @@ def generate_report(record, folder, final=False):
                 if a['annual_tax_budget'] is None: item['tax_budget']=''
                 w.writerow(item)
     from .report_layout import render_report
-    layout=render_report(record,pdf,folder,editor,final,png)
+    layout=render_report(record,pdf,photo_folder or folder,editor,final,png)
     record["report_document"]=editor.catalog
     from .source_report import generate_sources
+    from .internal_review import generate_internal
     source_path=folder/(prefix+'-sources.pdf')
+    internal_path=folder/(prefix+'-internal-review.pdf')
+    internal_pages=generate_internal(record,internal_path)
     source_pages=generate_sources(record,source_path)
-    return {'pdf':pdf.name,'sources_pdf':source_path.name,'cashflow_png':png.name,'cashflow_csv':csv_path.name,'calculations_png':calc.name,'generated_at':now(),'revision':record['revision'],'final':final,'sources_page_count':source_pages,**layout}
+    exports={'cashflow_png':png.name,'cashflow_csv':csv_path.name,'calculations_png':calc.name} if complete else {}
+    return {'pdf':pdf.name,'sources_pdf':source_path.name,'internal_review_pdf':internal_path.name,'internal_review_page_count':internal_pages,
+            **exports,'generated_at':now(),'revision':record['revision'],'final':final,'incomplete':not complete,'sources_page_count':source_pages,**layout}

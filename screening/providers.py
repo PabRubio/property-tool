@@ -156,7 +156,13 @@ def pd_comparables(raw, kind, source_id=None):
         if not amount or amount <= 0 or not c.get("address"):
             continue
         sqm = numeric(c.get("sqf"))
-        rows.append({"kind": kind, "address": str(c["address"]), "amount": round(amount * multiplier, 2),
+        address = c.get('full_address') or c['address']
+        if c.get('house_number') or c.get('building_name'):
+            identity = str(c.get('house_number') or c.get('building_name'))
+            if not str(address).lower().startswith(identity.lower()): address = identity+', '+str(address)
+        rows.append({"kind": kind, "address": str(address), "amount": round(amount * multiplier, 2),
+                     "full_address": str(address) if c.get('full_address') or c.get('house_number') or c.get('building_name') else None,
+                     "postcode": c.get('postcode'), "condition": c.get('condition'), "rental_basis": c.get('rental_basis'),
                      "date": str(c.get("date", ""))[:10], "source_url": str(c.get("url", "")),
                      "bedrooms": numeric(c.get("bedrooms")), "floor_area_sqm": round(sqm / 10.7639104167, 2) if sqm else None,
                      "distance": numeric(c.get("distance")), "selected": False, "source": "PropertyData / " + {"sold": "Land Registry", "rent": "advertised rent", "asking": "advertised sale"}[kind],

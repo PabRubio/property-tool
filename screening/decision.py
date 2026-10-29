@@ -10,7 +10,7 @@ def operating_costs(inputs, model):
         supplied = a.get(key) is not None
         rows.append({'key': key, 'label': label, 'annual': money(annual) if supplied else None,
                      'monthly': money(annual/12) if supplied else None, 'includes': includes,
-                     'basis': provenance.get('assumptions.'+key, {}).get('basis', 'Unconfirmed modelling budget') if supplied else 'Unknown; excluded, not assumed free',
+                     'basis': model.get('modelling_basis',{}).get(key, provenance.get('assumptions.'+key, {}).get('basis', 'Unconfirmed modelling budget')) if supplied else 'Unknown; excluded, not assumed free',
                      'source_ids': ['assumptions']})
     add('management_pct', 'Letting management', rent*12*(1-a['void_pct']/100)*a['management_pct']/100, '%s%% of collected rent; routine agent management, not letting/renewal charges.' % a['management_pct'])
     add('maintenance_pct', 'Repairs and maintenance', rent*12*a['maintenance_pct']/100, '%s%% of scheduled rent for routine repairs and small replacements. Excludes cleaning, planned refurbishment and separately budgeted major works.' % a['maintenance_pct'])
@@ -34,13 +34,13 @@ def purchase_guidance(inputs, model):
     fixed_loan = a.get('mortgage_amount') if a['financing'] != 'cash' else None
     budget = inputs['investor'].get('cash_budget')
     def at(price):
-        cost = price + stamp_duty(price, a)['total'] + a['legal_fees'] + a['survey_fees'] + a['other_purchase_costs'] + model['metrics']['refurbishment_with_contingency']
+        cost = price + stamp_duty(price, a)['total'] + a['legal_fees'] + a['survey_fees'] + a['other_purchase_costs'] + a.get('safety_upfront',0) + model['metrics']['refurbishment_with_contingency']
         stable, loan, _ = project(dict(a, holding_years=1, initial_void_months=0), price, rent)
         monthly = sum(r['cashflow_before_tax'] for r in stable)/12
         cash = cost - loan + a['mortgage_fees'] + a['cash_reserve']
         rows, _, _ = project(a, price, rent)
         funding = max(0, -min(0, min(r['cumulative_cashflow'] for r in rows))-a['cash_reserve'])
-        return {'yield': noi/cost*100, 'cashflow': monthly, 'cash': cash+funding}
+        return {'yield': sum(r['net_operating_income'] for r in stable)/cost*100, 'cashflow': monthly, 'cash': cash+funding}
     def ceiling(test, low=1):
         high = 100000000
         if not test(at(low)): return None
@@ -55,7 +55,7 @@ def purchase_guidance(inputs, model):
     yield_cap = ceiling(lambda r:r['yield'] >= target) if target > 0 else None
     low = max(1, (fixed_loan or a.get('deposit_amount') or 0)+.01)
     def passes(r):
-        return r['yield'] >= target and r['cashflow'] >= a['min_monthly_cashflow'] and (budget is None or r['cash'] <= budget)
+        return r['yield'] >= target and r['cashflow'] >= a['min_monthly_cashflow']
     feasible = passes(at(low))
     cap = ceiling(passes, low) if feasible else None
     market = model['sales_evidence']['range']
@@ -64,7 +64,7 @@ def purchase_guidance(inputs, model):
             'feasible_with_current_finance': feasible, 'supported_purchase_range': market,
             'range_meeting_targets': overlap, 'recommended_bid_ceiling': overlap[1] if overlap else None,
             'finance_basis': 'Supplied mortgage amount stays fixed; a purchase price must exceed that loan.' if fixed_loan is not None else ('Cash purchase.' if a['financing'] == 'cash' else ('Supplied cash deposit stays fixed; borrowing changes with the purchase price.' if a.get('deposit_amount') is not None else 'Mortgage amount varies with the supplied deposit percentage / LTV.')),
-            'method': 'Price ceiling solves the configured net-yield, monthly pre-tax cash-flow and available-cash tests, recalculating SDLT and acquisition costs. Cash includes reserves and projected additional funding. It is a return-based ceiling, not market value or a lender offer.',
+            'method': 'Price ceiling solves the configured net-yield and monthly pre-tax cash-flow tests, recalculating SDLT and acquisition costs. Funding requirements are reported separately. It is a return-based ceiling, not market value or a lender offer.',
             'limitations': 'Comparable range is unadjusted completed-sale evidence; condition, legal title and size conflicts require review. Unknown costs are excluded. No arbitrary auction discount or guaranteed winning bid is assumed.',
             'reason': 'No price satisfies every configured target with the current financing.' if not feasible else ('A supported bid range requires both sufficiently matched sales and a finite return-based ceiling.' if not overlap else 'Intersection of the supported sales range and the return-based ceiling.'),
             'target_basis': {key: inputs.get('input_provenance', {}).get('assumptions.'+key, {}).get('basis', 'Configured screening assumption') for key in ('min_net_yield_pct', 'min_monthly_cashflow')}}

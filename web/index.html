@@ -1,7 +1,7 @@
 <!doctype html>
 <html lang="en">
-<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Client property form</title><link rel="stylesheet" href="assets/style.css"><script src="assets/intake.js" defer></script></head>
-<body><header><div class="header-identity"><a class="brand" href="./"><svg class="brand-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m3 10 9-7 9 7"/><path d="M5 9v12h5v-7h4v7h5V9"/></svg><span>Company name</span></a><span class="tag">England · Long-term rentals</span></div><a class="header-link" href="review" id="review-link">Analyst dashboard →</a></header>
+<head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Lacewing Analytics</title><link rel="stylesheet" href="assets/style.css"><script src="assets/intake.js" defer></script></head>
+<body><header><div class="header-identity"><a class="brand" href="./"><svg class="brand-icon" xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="m3 10 9-7 9 7"/><path d="M5 9v12h5v-7h4v7h5V9"/></svg><span>Lacewing Analytics</span></a><span class="tag">England · Long-term rentals</span></div><a class="header-link" href="review" id="review-link">Analyst dashboard →</a></header>
 <main class="intake"><div id="brief-entry"><h1>Property brief</h1>
 <form id="brief-form">
 <section class="panel"><h2>About you</h2><div class="grid">
@@ -46,14 +46,15 @@
 <label id="deposit-amount-field">Deposit towards purchase (£) <span class="required-marker" aria-hidden="true">*</span><input name="deposit_amount" type="text" inputmode="decimal" data-number="money" data-min="1" data-max="100000000" required></label>
 <label id="deposit-percent-field" hidden>Deposit (%) <span class="required-marker" aria-hidden="true">*</span><input name="deposit_pct" type="text" inputmode="decimal" data-number="percent" data-min="5" data-max="99.99" required disabled></label>
 <label>Repayment type <span class="required-marker" aria-hidden="true">*</span><select name="repayment_type" required><option value="interest_only">Interest-only</option><option value="repayment">Repayment</option><option value="mortgage_unsure">Not sure — model interest-only for now</option></select></label>
-<label>All-in annual interest rate (%) (optional)<input name="interest_rate_pct" type="text" inputmode="decimal" data-number="percent" data-min="0" data-max="30" placeholder="If known"></label>
+<label>Annual interest rate (%) (optional)<input name="interest_rate_pct" type="text" inputmode="decimal" data-number="percent" data-min="0" data-max="30" placeholder="If known"></label>
 <label>How long is the interest rate fixed for? (optional)<select name="rate_type"><option value="unknown">Not sure</option><option value="2">2 years</option><option value="3">3 years</option><option value="5">5 years</option><option value="10">10 years</option><option value="tracker">Tracker / variable</option></select></label>
 <label id="reset-rate-field" hidden>Rate after the fixed period (%) (optional)<input name="rate_after_fix_pct" type="text" inputmode="decimal" data-number="percent" data-min="0" data-max="50" disabled placeholder="If known"></label>
-<label id="mortgage-term-field" hidden>Length of the whole loan, e.g. 25 <span class="required-marker" aria-hidden="true">*</span><input name="mortgage_term_years" type="number" min="1" max="40" step="1" required value="25" disabled aria-describedby="mortgage-term-help"><small id="mortgage-term-help" class="field-help">Full repayment term in years. This is separate from the fixed-rate period.</small></label>
+<label id="mortgage-term-field" hidden>Length of the whole loan, e.g. 25 <span class="required-marker" aria-hidden="true">*</span><input name="mortgage_term_years" type="number" min="1" max="40" step="1" required value="25" disabled></label>
 </div></fieldset></section>
 <section class="panel"><h2>Works and targets</h2><div class="grid">
 <label>Refurbishment <span class="required-marker" aria-hidden="true">*</span><select name="refurb_level" required><option value="none">No refurbishment</option><option value="refurb_light">Light refurbishment</option><option value="refurb_moderate">Moderate refurbishment</option><option value="refurb_heavy">Heavy refurbishment</option></select></label>
 <label id="refurb-budget-field" hidden>Refurbishment budget (£, if known)<input name="refurbishment" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="10000000" disabled></label>
+<label id="after-works-field" hidden>Value after works (£, if known)<input name="after_works_value" type="text" inputmode="decimal" data-number="money" data-min="1" data-max="100000000" disabled></label>
 <label id="refurb-finish-field" hidden>Finish for the estimate<select name="refurb_finish" disabled><option value="medium">Standard</option><option value="basic">Basic</option><option value="premium">Premium</option></select></label>
 <label>Target net rental yield (%) (optional)<input name="min_net_yield_pct" type="text" inputmode="decimal" data-number="percent" data-min="0" data-max="100" placeholder="After running costs, before mortgage and tax"></label>
 <label>Target monthly cash flow (£) (optional)<input name="min_monthly_cashflow" type="text" inputmode="decimal" data-number="money" data-min="-100000" data-max="1000000" placeholder="After mortgage payments, before income tax"></label>
@@ -63,6 +64,8 @@
 <label>Basis of rent estimate<input name="rent_source" maxlength="1000" placeholder="For example, a letting agent's estimate"></label>
 <label>Legal purchase fees (£)<input name="legal_fees" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="1000000"></label>
 <label>Survey fees (£)<input name="survey_fees" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="100000"></label>
+<label>Management fee including VAT (%)<input name="management_pct" type="text" inputmode="decimal" data-number="percent" data-min="0" data-max="50"></label>
+<label>Upfront fire / safety costs (£)<input name="safety_upfront" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="1000000"></label>
 <label>Annual service / estate charge (£)<input name="service_charge" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="1000000"></label>
 <label>Annual ground rent (£)<input name="ground_rent" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="1000000"></label>
 <label>Annual landlord-paid regular cleaning (£)<input name="regular_cleaning" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="100000" placeholder="Leave blank if unknown"></label>

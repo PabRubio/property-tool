@@ -56,6 +56,7 @@
     ]){$(id).hidden=!visible;form.elements[key].disabled=!mortgage||!visible;}
     const works=form.elements.refurb_level.value!=='none';
     $('refurb-budget-field').hidden=!works;form.elements.refurbishment.disabled=!works;
+    $('after-works-field').hidden=!works;form.elements.after_works_value.disabled=!works;
     $('refurb-finish-field').hidden=!works;form.elements.refurb_finish.disabled=!works;
     const priced=form.elements.price_status.value!=='unknown';
     $('price-field').hidden=!priced;form.elements.asking_price.disabled=!priced;
@@ -84,7 +85,7 @@
     for(const k of ['asking_price','bedrooms','bathrooms','floor_area_sqm','off_street_parking','lease_years'])out.property[k]=num(k);
     Object.assign(out.property,{country:'England',new_build:checked('new_build'),building_attachment:f.get('building_attachment')||''});
     Object.assign(out.assumptions,{financing:f.get('financing')==='mortgage'?f.get('repayment_type'):f.get('financing'),buyer_type:f.get('buyer_type'),additional_property:f.get('additional_property')==='yes',nonresident:f.get('uk_resident')!=='yes',refurbishment_planned:f.get('refurb_level')!=='none',refurb_level:f.get('refurb_level'),refurb_finish:f.get('refurb_finish')||'medium',rent_source:f.get('rent_source')||''});
-    for(const k of ['deposit_amount','deposit_pct','holding_years','rate_after_fix_pct','regular_cleaning','turnover_cleaning','interest_rate_pct','mortgage_term_years','refurbishment','min_net_yield_pct','min_monthly_cashflow','monthly_rent','legal_fees','survey_fees','service_charge','ground_rent']){if(num(k)!==null)out.assumptions[k]=num(k);}
+    for(const k of ['deposit_amount','deposit_pct','holding_years','rate_after_fix_pct','regular_cleaning','turnover_cleaning','interest_rate_pct','mortgage_term_years','refurbishment','min_net_yield_pct','min_monthly_cashflow','monthly_rent','management_pct','safety_upfront','after_works_value','legal_fees','survey_fees','service_charge','ground_rent']){if(num(k)!==null)out.assumptions[k]=num(k);}
     if(!out.assumptions.refurbishment_planned)out.assumptions.refurbishment=0;
     if(out.assumptions.financing!=='cash'){
       const rateType=f.get('rate_type');
