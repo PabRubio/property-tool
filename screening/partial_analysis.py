@@ -36,8 +36,8 @@ def partial_analysis(inputs, evidence, a, basis, strategy, price, rent, price_ba
     debt = payment(loan,a['interest_rate_pct'],a['mortgage_term_years']*12,a['financing']) if loan is not None else None
     cash = cost-loan+a['mortgage_fees']+a['cash_reserve'] if cost is not None and loan is not None else None
     noi = None
-    if rent is not None:
-        # Operating income does not depend on purchase price or borrowing.
+    if rent is not None and 'maintenance_value' not in missing:
+        # Operating income requires the chosen repair basis, but not borrowing.
         rows,_,_ = project(dict(a,financing='cash',holding_years=1,initial_void_months=0),0,rent)
         noi = sum(row['net_operating_income'] for row in rows)
     flow = noi/12-debt if noi is not None and debt is not None else None
@@ -80,11 +80,9 @@ def partial_analysis(inputs, evidence, a, basis, strategy, price, rent, price_ba
                     for label,key,actual,unit in [('Net yield on total cost','min_net_yield_pct',v['net_yield_on_cost_pct'],'%'),
                       ('Monthly cash flow before income tax','min_monthly_cashflow',v['monthly_cashflow_before_tax'],'GBP')]]
     from .decision import operating_costs
-    costs=operating_costs(inputs,dict(model,metrics=dict(v,monthly_rent=rent or 0)))
-    if rent is None:
-        for row in costs:
-            if row['key'] in ('management_pct','maintenance_pct'): row.update(annual=None,monthly=None,basis='Unavailable until rent supplied')
-    model['operating_costs']=costs
+    model['operating_costs']=operating_costs(inputs,model)
+    # These projections expose only debt and rent, which are independent of repair costs.
+    independent=dict(a,maintenance_basis='rent',maintenance_pct=0)
     for years in sorted({3,5,10,a['holding_years']}):
         value=model['refurbishment_value']['after_works_value']
         future=money(value*(1+a['price_growth_pct']/100)**years) if value is not None else None
@@ -92,11 +90,11 @@ def partial_analysis(inputs, evidence, a, basis, strategy, price, rent, price_ba
         within_term=a['financing']!='interest_only' or years<=a['mortgage_term_years']
         if loan is not None and within_term and future is not None:
             # Only read the debt balance: debt amortisation is independent of rent.
-            debt_rows,_,_=project(dict(a,holding_years=years),price or 0,0)
+            debt_rows,_,_=project(dict(independent,holding_years=years),price or 0,0)
             proceeds=money(future*(1-a['selling_fee_pct']/100)-a['sale_legal_fees']-a['early_repayment_fee']-debt_rows[-1]['loan_balance']-(a['sale_tax_budget'] or 0))
         rental_income=None
         if rent is not None:
-            rent_rows,_,_=project(dict(a,financing='cash',holding_years=years),0,rent)
+            rent_rows,_,_=project(dict(independent,financing='cash',holding_years=years),0,rent)
             rental_income=money(sum(row['collected_rent'] for row in rent_rows))
         model['horizons'].append({'years':years,'available':False,'reason':'Incomplete inputs: '+', '.join(missing),
                                  'rental_income':rental_income,'rental_cashflow':None,

@@ -259,6 +259,7 @@ def clear_profile_inputs(new, old):
 
 def invalidate_size_evidence(evidence):
     """Size-filtered samples cannot be reused after an area correction."""
+    evidence.pop('estimates', None)
     endpoints = ('prices-per-sqf', 'sold-prices-per-sqf')
     for endpoint in endpoints: evidence.get('raw', {}).pop(endpoint, None)
     for key in ('asking_price_per_sqft', 'sold_price_per_sqft'): evidence.get('market', {}).pop(key, None)

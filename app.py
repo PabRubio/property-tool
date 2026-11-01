@@ -16,6 +16,7 @@ from screening.store import Store, atomic_json
 from screening.providers import gather, now, scrub
 from screening.finance import analyse
 from screening.narrative import generate, validate_content, allowed_sources, default_provider, plan_revision
+from screening.codex import available as codex_available
 from screening.reports import generate_report
 from screening.photos import photo_groups, prepare_image
 
@@ -29,8 +30,6 @@ def load_env():
             if not line.strip() or line.lstrip().startswith("#") or "=" not in line: continue
             key,value=line.split("=",1)
             os.environ.setdefault(key.strip(),value.strip().strip("\"'"))
-    for canonical,alias in (("ANTHROPIC_API_KEY","CLAUDE_API_KEY"),("GEMINI_API_KEY","GOOGLE_API_KEY")):
-        if not os.getenv(canonical) and os.getenv(alias): os.environ[canonical]=os.environ[alias]
 
 
 def provenance(new, old=None, supplied=None):
@@ -122,7 +121,7 @@ def create_app(data_dir=None):
     @app.route("/api/config")
     def config():
         return jsonify(token=token,defaults=defaults(),default_provider=default_provider(),fields=[dict(zip(("key","label","group","default","min","max"),f)) for f in FIELDS],brand="Lacewing Analytics",
-                       providers={"propertydata":bool(os.getenv("PROPERTYDATA_API_KEY")),"anthropic":bool(os.getenv("ANTHROPIC_API_KEY")),"openai":bool(os.getenv("OPENAI_API_KEY")),"gemini":bool(os.getenv("GEMINI_API_KEY"))})
+                       providers={"propertydata":bool(os.getenv("PROPERTYDATA_API_KEY")),"codex":codex_available()})
 
     @app.route("/api/records",methods=["GET","POST"])
     def records():
@@ -208,7 +207,7 @@ def create_app(data_dir=None):
             if r['inputs'].get('enquiry',{}).get('kind')=='area': raise ValueError('Area enquiries are saved for manual follow-up; select a property before generating a report')
             if kind=="gather" and r["mode"]=="demo": raise ValueError("Demo records remain fictional. Create a new brief to use live data.")
             provider=b.get("provider",default_provider())
-            if provider not in ("none","anthropic","openai","gemini"): raise ValueError("Unknown AI provider")
+            if provider not in ("none","codex"): raise ValueError("Only Codex is supported for AI tasks")
             if kind=="gather" and not os.getenv("PROPERTYDATA_API_KEY"): raise ValueError("Add PROPERTYDATA_API_KEY to .env and restart the server")
             analyst_notes=string(b.get("analyst_notes",r["inputs"].get("analyst_notes","")),"Additional information")
             apply_notes=r['mode']!='demo' and analyst_notes!=r['inputs'].get('analyst_notes','')
@@ -297,9 +296,7 @@ def create_app(data_dir=None):
         instruction=string(b.get('instruction',''),'Edit request',3000)
         if not instruction: raise ValueError('Describe the change you want')
         provider=b.get('provider',default_provider())
-        if provider not in ('anthropic','openai','gemini'): raise ValueError('Configure an AI API key in .env and restart the server to request edits')
-        if not os.getenv({'anthropic':'ANTHROPIC_API_KEY','openai':'OPENAI_API_KEY','gemini':'GEMINI_API_KEY'}[provider]):
-            raise ValueError('The selected AI provider has no API key configured')
+        if provider != 'codex': raise ValueError('Only Codex is supported for AI edits')
         with store.lock:
             r=writable(record_id,b)
             if not r.get('artifacts',{}).get('pdf'): raise ValueError('Generate a report before requesting edits')
@@ -307,12 +304,16 @@ def create_app(data_dir=None):
             r.update(status='running',job={'state':'running','kind':'revise','message':'Reading your edit request'})
             store.save(r)
         def worker():
+            research_result=None
+            def capture_research(result):
+                nonlocal research_result
+                research_result=result
             try:
                 if not original.get('report_document'):
                     # Older saved reports predate the editable text catalog.
                     with tempfile.TemporaryDirectory(prefix='report-editor-') as preview:
                         generate_report(original,preview)
-                inputs, explanation, changes, presentation, rewrite=plan_revision(original,provider,instruction)
+                inputs, explanation, changes, presentation, rewrite, research_result=plan_revision(original,provider,instruction,capture_research=capture_research)
                 revised=copy.deepcopy(original)
                 revised['inputs']=provenance(inputs,original['inputs'])
                 for change in changes:
@@ -337,24 +338,30 @@ def create_app(data_dir=None):
                 revised.update(revision=original['revision']+1,approval=None,status='ready_for_review')
                 if inputs['property'].get('floor_area_sqm') != original['inputs']['property'].get('floor_area_sqm'):
                     invalidate_size_evidence(revised['evidence'])
+                from screening.edit_research import apply_with_repair
+                edit_research=apply_with_repair(revised,research_result,instruction)
+                if edit_research.get('corrected'):explanation='Applied the supported findings after checking citations; review remaining evidence gaps.'
                 revised['inputs']=enriched_inputs(revised['inputs'],revised['evidence'])
                 upgraded=revised['analysis'].get('version') != 5
-                if changes or upgraded or not revised['analysis'].get('horizons'):revised['analysis']=analyse(revised['inputs'],revised['evidence'],revised['mode'])
+                if changes or edit_research['changed'] or upgraded or not revised['analysis'].get('horizons'):revised['analysis']=analyse(revised['inputs'],revised['evidence'],revised['mode'])
                 with store.lock:
                     pending=store.load(record_id);pending['job']['message']='Applying your changes and rebuilding the PDF';store.save(pending)
                 if not revised['analysis']['available']:
                     from screening.incomplete_report import generate_incomplete
                     revised['artifacts']=generate_incomplete(revised,provider,store.folder(record_id));revised['status']='needs_input'
                 else:
-                    if rewrite or changes or upgraded:revised['narrative']=generate(revised,provider,instructions=instruction,strict=True)
+                    if rewrite or changes or edit_research['changed'] or upgraded:revised['narrative']=generate(revised,provider,instructions=instruction,strict=True)
                     revised['artifacts']=generate_report(revised,store.folder(record_id))
-                revised.setdefault('edit_history',[]).append({'at':now(),'request':instruction,'message':explanation,'changes':changes,'presentation':presentation,'rewrite_commentary':rewrite,'revision':revised['revision']})
+                revised.setdefault('edit_history',[]).append({'at':now(),'request':instruction,'message':explanation,'changes':changes,'presentation':presentation,'rewrite_commentary':rewrite,'research':edit_research,'revision':revised['revision']})
                 revised['job']={'state':'done','kind':'revise','message':'Report updated. '+explanation}
                 with store.lock:
                     atomic_json(store.folder(record_id)/'history'/('revision-%s.json'%original['revision']),original)
                     store.save(revised,'AI edit applied; review reset')
             except Exception as exc:
                 reason=scrub(str(exc)) if isinstance(exc,ValueError) else 'AI edit failed. Check the provider connection and try again.'
+                original['last_failed_edit']={'at':now(),'request':instruction,'error':reason,
+                    'research':getattr(exc,'research_result',research_result),
+                    'validation_feedback':getattr(exc,'feedback',[])}
                 original['job']={'state':'failed','kind':'revise','message':reason+' Existing report kept.'}
                 store.save(original,'AI edit failed; previous report preserved')
         threading.Thread(target=worker,daemon=True).start()

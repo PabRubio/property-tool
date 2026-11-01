@@ -121,7 +121,8 @@ class ReportUpdates(unittest.TestCase):
             self.assertIn('Figures depend on the stated rent',main[1]);self.assertIn('Location and nearby amenities',main[0])
             self.assertIn('Property screening',main[0]);self.assertNotIn('Property introduction',main[0])
             self.assertEqual(main[0].count(r['inputs']['property']['address']),1)
-            self.assertNotIn(investigation,' '.join(''.join(main).split()))
+            # Material cost qualifications remain visible even when they contain staff actions.
+            self.assertIn(investigation,' '.join(main[8].split()))
             internal=subprocess.check_output(['pdftotext',str(Path(folder)/a['internal_review_pdf']),'-'],text=True)
             self.assertIn(investigation,' '.join(internal.split()))
             for key,count in [('pdf',10),('sources_pdf',1),('internal_review_pdf',1)]:self.assertEqual(pages(Path(folder)/a[key]),count)
@@ -177,14 +178,14 @@ class EditUpdates(unittest.TestCase):
         self.fail('Job timed out')
 
     def test_success_refreshes_exports_and_failed_edit_keeps_working_report(self):
-        with tempfile.TemporaryDirectory() as folder,patch.dict('os.environ',{'ANTHROPIC_API_KEY':'test'}):
+        with tempfile.TemporaryDirectory() as folder:
             app=create_app(folder);client=app.test_client();headers={'X-Local-Token':app.csrf_token}
             r=app.store.create(build()['inputs'],'demo');r.update(analysis=analyse(r['inputs'],r['evidence'],'demo'))
             r['narrative']=deterministic(r);r['artifacts']=generate_report(r,app.store.folder(r['id']));r['status']='ready_for_review';app.store.save(r)
             old=copy.deepcopy(r);new=copy.deepcopy(r['inputs']);new['assumptions']['monthly_rent']=1800
-            planned=(new,'Rent updated',[{'section':'assumptions','key':'monthly_rent','value':1800}],{},True)
+            planned=(new,'Rent updated',[{'section':'assumptions','key':'monthly_rent','value':1800}],{},True,{'output':{'findings':[],'estimates':[],'cost_estimates':[]},'tool_calls':[]})
             with patch('app.plan_revision',return_value=planned),patch('app.generate',side_effect=lambda r,p,**kw:deterministic(r)):
-                response=client.post('/api/records/'+r['id']+'/revise',json={'revision':r['revision'],'provider':'anthropic','instruction':'Rent 1800'},headers=headers)
+                response=client.post('/api/records/'+r['id']+'/revise',json={'revision':r['revision'],'provider':'codex','instruction':'Rent 1800'},headers=headers)
                 self.assertEqual(response.status_code,202);r=self.wait_job(app,r['id'])
             self.assertEqual(r['job']['state'],'done',r['job']);self.assertEqual(r['analysis']['metrics']['monthly_rent'],1800)
             self.assertNotEqual(r['artifacts']['pdf'],old['artifacts']['pdf'])
@@ -193,7 +194,7 @@ class EditUpdates(unittest.TestCase):
                 with client.get('/api/records/'+r['id']+'/download/'+kind) as response:self.assertEqual(response.status_code,200)
             before=copy.deepcopy(r)
             with patch('app.plan_revision',side_effect=ValueError('Mocked writing failure')):
-                client.post('/api/records/'+r['id']+'/revise',json={'revision':r['revision'],'provider':'anthropic','instruction':'Fail'},headers=headers)
+                client.post('/api/records/'+r['id']+'/revise',json={'revision':r['revision'],'provider':'codex','instruction':'Fail'},headers=headers)
                 r=self.wait_job(app,r['id'])
             self.assertEqual(r['artifacts'],before['artifacts']);self.assertEqual(r['analysis'],before['analysis'])
             self.assertEqual(r['revision'],before['revision'])

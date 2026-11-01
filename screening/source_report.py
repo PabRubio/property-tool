@@ -7,6 +7,10 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.pagesizes import A4
 
 
+def analyst_wording(text):
+    return re.sub(r'\bcodex\b','Analyst',str(text),flags=re.I)
+
+
 def references(record):
     sources=list(record['evidence'].get('sources',[]))
     if record['evidence'].get('location'):
@@ -58,7 +62,7 @@ class CitationIndex:
                 label='<a href="'+escape(url,{'"':'&quot;'})+'" color="#19766e">'+number+'</a>' if url.startswith(('https://','http://')) else number
                 if label not in labels:labels.append(label)
             return '['+', '.join(labels)+']'
-        return re.sub(r'\[([a-zA-Z0-9_, -]+)\]',cite,escape(str(text)).replace('\n','<br/>'))
+        return re.sub(r'\[([a-zA-Z0-9_, -]+)\]',cite,escape(analyst_wording(text)).replace('\n','<br/>'))
 
 
 def generate_sources(record, path):
@@ -72,11 +76,11 @@ def generate_sources(record, path):
         label=('['+str(source['number'])+'] ') if 'number' in source else '['+source['id']+'] '
         title=str(source.get('title',source['id']))
         if len(title)>110:title=title[:107].rsplit(' ',1)[0]+'…'
-        url=source.get('url','');heading=escape(label+title)
+        url=source.get('url','');heading=escape(analyst_wording(label+title))
         if url.startswith(('https://','http://')):heading='<a href="'+escape(url,{'"':'&quot;'})+'" color="#19766e">'+heading+'</a>'
         date=str(source.get('retrieved_at') or '')[:10] or 'date not recorded'
         metadata=(urlparse(url).hostname or 'Supplied reference')+' | '+date+' | '+source.get('status','unverified')
-        entry=Table([[Paragraph(heading,body)],[Paragraph(escape(metadata),small)]],colWidths=[(A4[0]-100)/2],
+        entry=Table([[Paragraph(heading,body)],[Paragraph(escape(analyst_wording(metadata)),small)]],colWidths=[(A4[0]-100)/2],
                     style=[('LEFTPADDING',(0,0),(-1,-1),0),('RIGHTPADDING',(0,0),(-1,-1),0),
                            ('TOPPADDING',(0,0),(-1,-1),0),('BOTTOMPADDING',(0,0),(-1,-1),0)])
         entry.spaceAfter=3;story.append(entry)

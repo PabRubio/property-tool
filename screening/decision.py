@@ -1,5 +1,6 @@
 """Auditable decision inputs for the writer. AI explains these, not calculates them."""
 from .finance import stamp_duty, project, money
+from .costs import maintenance_monthly
 
 
 def operating_costs(inputs, model):
@@ -7,13 +8,15 @@ def operating_costs(inputs, model):
     provenance = inputs.get('input_provenance', {})
     rows = []
     def add(key, label, annual, includes):
-        supplied = a.get(key) is not None
+        supplied = a.get(key) is not None and annual is not None
         rows.append({'key': key, 'label': label, 'annual': money(annual) if supplied else None,
                      'monthly': money(annual/12) if supplied else None, 'includes': includes,
                      'basis': model.get('modelling_basis',{}).get(key, provenance.get('assumptions.'+key, {}).get('basis', 'Unconfirmed modelling budget')) if supplied else 'Unknown; excluded, not assumed free',
-                     'source_ids': ['assumptions']})
-    add('management_pct', 'Letting management', rent*12*(1-a['void_pct']/100)*a['management_pct']/100, '%s%% of collected rent; routine agent management, not letting/renewal charges.' % a['management_pct'])
-    add('maintenance_pct', 'Repairs and maintenance', rent*12*a['maintenance_pct']/100, '%s%% of scheduled rent for routine repairs and small replacements. Excludes cleaning, planned refurbishment and separately budgeted major works.' % a['maintenance_pct'])
+                     'source_ids': a.get('_cost_source_ids',{}).get(key,['assumptions'])})
+    add('management_pct', 'Letting management', rent*12*(1-a['void_pct']/100)*a['management_pct']/100 if rent is not None else None, '%s%% of collected rent, incl. VAT; routine management, excluding tenant-find/renewal charges.' % a['management_pct'])
+    maintenance=maintenance_monthly(a,rent)
+    unit='initial property value' if a.get('maintenance_basis')=='value' else 'scheduled annual rent'
+    add('maintenance_pct', 'Repairs and maintenance', maintenance*12 if maintenance is not None else None, '%s%% of %s for routine repairs/replacements. Excludes cleaning, refurbishment and separately budgeted major works.' % (a['maintenance_pct'],unit))
     for key, label, description in [
         ('regular_cleaning', 'Regular cleaning', 'Landlord-paid recurring cleaning, e.g. shared areas. Confirm frequency, areas, VAT and who pays; no automatic tenant cleaning charge.'),
         ('turnover_cleaning', 'Cleaning between tenancies', 'Annual landlord-paid changeover cleaning budget; confirm cost per clean and expected tenancy changes. Excludes routine cleaning.'),

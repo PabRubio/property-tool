@@ -28,8 +28,8 @@ def brief():
 
 class IntakeTests(unittest.TestCase):
     def setUp(self):
-        keys=patch.dict(os.environ,{'ANTHROPIC_API_KEY':'','OPENAI_API_KEY':'','GEMINI_API_KEY':''})
-        keys.start();self.addCleanup(keys.stop)
+        provider=patch('app.default_provider',return_value='none')
+        provider.start();self.addCleanup(provider.stop)
 
     def test_recommended_details_can_be_omitted(self):
         result = validate_submission(brief())

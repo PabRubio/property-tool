@@ -20,11 +20,11 @@ class PreflightTests(unittest.TestCase):
         b=brief();b['property'].update(asking_price=15000000,floor_area_sqm=1200)
         b['investor']['notes']='Large estate with several buildings; price confirmed.'
         i=validate_submission(b)
-        with patch.dict('os.environ',{'ANTHROPIC_API_KEY':'test'}),patch('screening.preflight.choose_model',return_value='test'),patch('screening.preflight.call_model',return_value={'summary':'The context explains the figures.','issues':[]}) as model:
-            result=assess(i,'anthropic')
+        with patch('screening.preflight.choose_model',return_value='test'),patch('screening.preflight.call_model',return_value={'summary':'The context explains the figures.','issues':[]}) as model:
+            result=assess(i,'codex')
         self.assertEqual(result['status'],'clear')
         self.assertEqual(result['issues'],[])
-        packet=model.call_args.args[4]
+        packet=model.call_args.args[3]
         self.assertEqual(packet['property']['asking_price'],15000000)
         self.assertEqual(packet['property']['floor_area_sqm'],1200)
         self.assertIn('several buildings',packet['investor']['notes'])
@@ -36,16 +36,16 @@ class PreflightTests(unittest.TestCase):
     def test_issues_are_ai_findings_and_do_not_change_inputs(self):
         i=validate_submission(brief());before=copy.deepcopy(i)
         issue={'fields':['property.asking_price','property.floor_area_sqm'],'title':'Confirm consistency','explanation':'These inputs do not appear consistent in context.','severity':'review'}
-        with patch.dict('os.environ',{'ANTHROPIC_API_KEY':'test'}),patch('screening.preflight.choose_model',return_value='test'),patch('screening.preflight.call_model',return_value={'summary':'A correction may be needed.','issues':[issue]}):
-            result=assess(i,'anthropic')
+        with patch('screening.preflight.choose_model',return_value='test'),patch('screening.preflight.call_model',return_value={'summary':'A correction may be needed.','issues':[issue]}):
+            result=assess(i,'codex')
         self.assertEqual(result['issues'],[issue]);self.assertEqual(result['status'],'needs_review')
         self.assertEqual(i,before)
 
     def test_explicit_additional_information_updates_fields(self):
         i=validate_submission(brief())
         output={'changes':[{'section':'property','key':'asking_price','value':1500000},{'section':'property','key':'bedrooms','value':6}], 'message':'Price corrected; six bedrooms retained.'}
-        with patch.dict('os.environ',{'ANTHROPIC_API_KEY':'test'}),patch('screening.preflight.choose_model',return_value='test'),patch('screening.preflight.call_model',return_value=output):
-            new,changes,message=correct(i,'The price should be £1.5m; six bedrooms is correct.','anthropic')
+        with patch('screening.preflight.choose_model',return_value='test'),patch('screening.preflight.call_model',return_value=output):
+            new,changes,message=correct(i,'The price should be £1.5m; six bedrooms is correct.','codex')
         self.assertEqual(new['property']['asking_price'],1500000)
         self.assertEqual(i['property']['asking_price'],250000)
         self.assertEqual(changes[0]['before'],250000)
@@ -54,8 +54,8 @@ class PreflightTests(unittest.TestCase):
 
     def test_context_confirmation_changes_no_figures(self):
         i=validate_submission(brief())
-        with patch.dict('os.environ',{'ANTHROPIC_API_KEY':'test'}),patch('screening.preflight.choose_model',return_value='test'),patch('screening.preflight.call_model',return_value={'changes':[],'message':'Context added.'}):
-            new,changes,_=correct(i,'The agent confirmed the size includes the whole property.','anthropic')
+        with patch('screening.preflight.choose_model',return_value='test'),patch('screening.preflight.call_model',return_value={'changes':[],'message':'Context added.'}):
+            new,changes,_=correct(i,'The agent confirmed the size includes the whole property.','codex')
         self.assertEqual(new['property'],i['property']);self.assertEqual(changes,[])
         self.assertNotEqual(fingerprint(new),fingerprint(i))
 
@@ -114,7 +114,7 @@ class PreflightTests(unittest.TestCase):
         started=threading.Event();release=threading.Event()
         def review(inputs,provider):
             started.set();release.wait(3);return self.review(inputs,provider)
-        with tempfile.TemporaryDirectory() as folder,patch('app.default_provider',return_value='anthropic'),patch('screening.preflight.assess',side_effect=review) as check,patch('app.gather') as gather:
+        with tempfile.TemporaryDirectory() as folder,patch('app.default_provider',return_value='codex'),patch('screening.preflight.assess',side_effect=review) as check,patch('app.gather') as gather:
             app=create_app(folder);client=app.test_client();headers={'X-Local-Token':app.csrf_token}
             saved=client.post('/api/records',json={'inputs':brief()},headers=headers).get_json()
             try:

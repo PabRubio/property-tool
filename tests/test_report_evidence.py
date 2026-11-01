@@ -11,7 +11,7 @@ from test_intake import brief
 from screening.schema import validate_submission
 from screening.finance import analyse, project, payment
 from screening.comparisons import comparison_summary, months_ago, recent_sale
-from screening.research import apply_findings, web_search, research, gaps
+from screening.research import apply_findings, research, gaps
 from screening.evidence import enriched_inputs
 from screening.narrative import deterministic, generate, validate_figures
 from screening.reports import generate_report
@@ -81,12 +81,14 @@ class FinanceEvidenceTests(unittest.TestCase):
 
     def test_bid_ceiling_recalculates_tax_and_respects_fixed_loan(self):
         i=inputs();i['assumptions']['min_net_yield_pct']=6
-        m=analyse(i,{},'manual');cap=m['purchase_guidance']['all_targets_price_ceiling']
+        # The same house retains its value-based repair allowance at different bids.
+        evidence={'market':{'valuation-sale':{'estimate':250000}}}
+        m=analyse(i,evidence,'manual');cap=m['purchase_guidance']['all_targets_price_ceiling']
         self.assertIsNotNone(cap)
         i['assumptions']['purchase_price']=cap
-        self.assertTrue(all(t['passes'] for t in analyse(i,{},'manual')['tests']))
+        self.assertTrue(all(t['passes'] for t in analyse(i,evidence,'manual')['tests']))
         i['assumptions']['purchase_price']=cap+1
-        self.assertFalse(analyse(i,{},'manual')['tests'][0]['passes'])
+        self.assertFalse(analyse(i,evidence,'manual')['tests'][0]['passes'])
         i['assumptions'].update(purchase_price=300000,financing='interest_only',mortgage_amount=270000)
         guide=analyse(i,{},'manual')['purchase_guidance']
         self.assertLess(guide['yield_price_ceiling'],270000)
@@ -175,19 +177,12 @@ class ResearchTests(unittest.TestCase):
 
     def test_search_failure_not_reported_as_no_designation(self):
         r=record()
-        with patch.dict('os.environ',{'ANTHROPIC_API_KEY':'test'}),patch('screening.narrative.choose_model',return_value='test'),patch('screening.research.web_search',side_effect=ValueError('Search unavailable')):
-            research(r,'anthropic')
+        with patch('screening.codex_research.run',side_effect=ValueError('Search unavailable')):
+            research(r,'codex')
         self.assertEqual(r['evidence']['research']['status'],'partial_failure')
-        self.assertTrue(all(f['status']=='failed' for f in r['evidence']['research']['findings']))
+        self.assertTrue(all(f['status']=='inconclusive' for f in r['evidence']['research']['findings']))
+        self.assertIn('Search unavailable',r['evidence']['research']['batches'][0]['errors'])
         self.assertFalse(r['evidence'].get('researched_facts'))
-
-    def test_native_anthropic_citations_and_search_errors(self):
-        raw={'stop_reason':'end_turn','content':[{'type':'server_tool_use','input':{'query':'test'}},{'type':'text','text':'Cited claim','citations':[{'url':'https://council.gov.uk/map','title':'Map','cited_text':'Evidence'}]},{'type':'web_search_tool_result','content':{'error_code':'max_uses_exceeded'}}]}
-        with patch('screening.research.request_json',return_value=raw) as call:
-            result=web_search('anthropic','key','model',{})
-        self.assertEqual(result['sources'][0]['support'],['Evidence'])
-        self.assertIn('max_uses_exceeded',result['errors'])
-        self.assertIn('tools',call.call_args.kwargs['body'])
 
     def test_researched_fact_never_overwrites_client(self):
         r=record();r['evidence']['researched_facts']={'property.floor_area_sqm':{'value':100,'source_ids':['research-x'],'retrieved_at':'2026-10-24'}}
@@ -209,8 +204,8 @@ class PDFTests(unittest.TestCase):
         r['analysis']=analyse(r['inputs'],r['evidence'],'manual')
         content={'summary':{'text':'Research did not establish a usable rent; financial returns remain uncalculated.','source_ids':['model']},
                  'next_steps':[{'text':'Obtain a written whole-property rent opinion from a local letting agent.','source_ids':['model']}]}
-        with tempfile.TemporaryDirectory() as folder,patch.dict('os.environ',{'ANTHROPIC_API_KEY':'test'}),patch('screening.incomplete_report.choose_model',return_value='test'),patch('screening.incomplete_report.call_model',return_value=content):
-            artifacts=generate_incomplete(r,'anthropic',folder)
+        with tempfile.TemporaryDirectory() as folder,patch('screening.incomplete_report.choose_model',return_value='test'),patch('screening.incomplete_report.call_model',return_value=content):
+            artifacts=generate_incomplete(r,'codex',folder)
             text=subprocess.check_output(['pdftotext',str(Path(folder)/artifacts['pdf']),'-'],text=True)
             self.assertTrue(artifacts['incomplete']);self.assertNotIn('cashflow_csv',artifacts)
             self.assertIn('financial returns remain uncalculated',' '.join(text.split()))

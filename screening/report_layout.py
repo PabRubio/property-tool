@@ -365,7 +365,7 @@ def render_report(record,path,folder,editor,final,cashflow):
         story=[table([['Financial test','Target','Result','Assessment']]+[[t['label'],pct(t['target']) if t['unit']=='%' else gbp(t['target']),pct(t['actual']) if t['unit']=='%' else gbp(t['actual']),'Unavailable' if t['passes'] is None else 'PASS' if t['passes'] else 'FAIL'] for t in m['tests']],[220,95,95,W-410]),
                L.paragraph('Target sources — net yield: '+m['purchase_guidance']['target_basis']['min_net_yield_pct']+'; monthly cash flow: '+m['purchase_guidance']['target_basis']['min_monthly_cashflow']+'. These are configured screening targets, not a universal standard.',8.5),L.heading('Base-case observations')]
         story += [L.prose(item) for item in n['strengths'] if not investigative(item)]
-        story += [L.heading('Risks and qualifications')]+[L.prose(item) for item in n['risks'] if not investigative(item)]
+        story += [L.heading('Risks and qualifications')]+[L.prose(item) for item in n['risks']]
         funding=m['funding']
         story += [L.heading('Funding information'),table([['Cash required / cash available',gbp(funding['cash_required'])+' / '+gbp(funding['cash_available'])],['Initial funding shortfall',gbp(funding.get('initial_shortfall'))],['Projected additional funding / total shortfall',gbp(funding['additional_cash_needed'])+' / '+gbp(funding['shortfall'])]],padding=3),
                   L.paragraph('Funding is separate from the yield and cash-flow tests. Unknown charges are excluded; returns remain conditional on the supplied rent, property facts and cost allowances. [model, assumptions]',8.5),
@@ -390,11 +390,15 @@ def render_report(record,path,folder,editor,final,cashflow):
         rows=[['Cost / basis','Annual / monthly','What it covers']]
         for cost in m['operating_costs']:
             basis='Unknown; excluded' if cost['annual'] is None else 'Supplied; unverified' if any(word in cost['basis'].lower() for word in ('user / analyst','analyst supplied','supplied / saved')) else 'Assumption; confirm'
-            rows.append([cost['label']+'\n'+basis,('Unknown' if cost['annual'] is None else gbp(cost['annual'])+' / '+gbp(cost['monthly'])),scope[cost['key']]])
+            if cost['annual'] is not None and cost['basis'].startswith('Analyst estimate'):basis='Analyst estimate'
+            if cost['annual'] is not None and cost['basis'].startswith('Fallback'):basis='Fallback; confirm'
+            description=cost['includes'] if cost['key'] in ('management_pct','maintenance_pct') else scope[cost['key']]
+            rows.append([cost['label']+'\n'+basis,('Unknown' if cost['annual'] is None else gbp(cost['annual'])+' / '+gbp(cost['monthly'])),description])
         story=[table(rows,[139,116,W-255],size=8.2,padding=3),L.paragraph('Unknown budgets are excluded, not assumed free. Safety/compliance includes recurring gas/electrical checks and alarm provision; upfront safety is separate on page 3. Service-charge and works inclusions must be reconciled. [assumptions, safety-gov]',8.2),L.heading('Effective assumptions and basis')]
         defaults_rows=[['Model input','Effective value / basis']]
         for key,label in [('management_pct','Management incl. VAT'),('compliance','Recurring safety'),('safety_upfront','Upfront safety'),('maintenance_pct','Maintenance'),('void_pct','Vacancy'),('cost_growth_pct','Annual cost growth')]:
             value=pct(a[key]) if key.endswith('_pct') else gbp(a[key])
+            if key=='maintenance_pct':value+=' of '+('value' if a.get('maintenance_basis')=='value' else 'rent')
             defaults_rows.append([label,value+' — '+m['modelling_basis'][key]])
         story.append(table(defaults_rows,[125,W-125],size=8,padding=2))
         from .tax_notes import tax_explanation

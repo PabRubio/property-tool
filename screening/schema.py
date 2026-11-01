@@ -30,7 +30,7 @@ FIELDS = [
     ("void_pct", "Ongoing rent lost to vacancies / arrears (%)", "Rent & running costs", 5, 0, 100),
     ("initial_void_months", "Initial whole months without rent", "Rent & running costs", 0, 0, 24),
     ("management_pct", "Management fee incl. VAT (% of collected rent)", "Rent & running costs", 14.4, 0, 50),
-    ("maintenance_pct", "Maintenance allowance (% of scheduled rent)", "Rent & running costs", 5, 0, 50),
+    ("maintenance_pct", "Maintenance allowance (% of selected rent/value basis)", "Rent & running costs", 5, 0, 50),
     ("regular_cleaning", "Annual landlord-paid regular cleaning (£; blank = unknown)", "Rent & running costs", None, 0, 100000),
     ("turnover_cleaning", "Annual landlord-paid cleaning between tenancies (£; blank = unknown)", "Rent & running costs", None, 0, 100000),
     ("service_charge", "Annual service charge (£; blank = unknown)", "Rent & running costs", None, 0, 1000000),
@@ -77,7 +77,7 @@ def defaults():
             "assumptions": dict({f[0]: f[3] for f in FIELDS}, financing="unknown", buyer_type="individual",
                                 additional_property=True, nonresident=False, corporate_relief_confirmed=False,
                                 new_lease=False, rate_type="unknown", rent_source="", cost_source="", finance_source="", tax_source="", after_works_source="", safety_included_in="none",
-                                refurbishment_planned=False, refurb_level="refurb_light", refurb_finish="medium"),
+                                refurbishment_planned=False, refurb_level="refurb_light", refurb_finish="medium", maintenance_basis="auto"),
             "comparables": [], "analyst_notes": "", "input_provenance": {}}
 
 
@@ -209,6 +209,8 @@ def validate(payload):
         a[key] = string(a[key], key)
     if a['safety_included_in'] not in ('none', 'refurbishment', 'other_purchase_costs'):
         raise ValueError('Invalid safety budget inclusion')
+    if a['maintenance_basis'] not in ('auto','rent','value'):
+        raise ValueError('Invalid maintenance basis')
     if a['refurb_level'] not in ('none', 'refurb_light', 'refurb_moderate', 'refurb_heavy') or a['refurb_finish'] not in ('basic', 'medium', 'premium'): raise ValueError('Invalid refurbishment reference')
     if a['refurb_level'] == 'none':
         if a['refurbishment_planned'] or (a['refurbishment'] or 0) > 0:

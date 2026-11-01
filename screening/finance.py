@@ -11,6 +11,7 @@ from .market_evidence import (hydrate_comparables, regional_rent_growth, growth_
 from .schema import api_property_type
 from .providers import numeric
 from .modelling import effective_defaults, works_value
+from .costs import effective as effective_costs, maintenance_monthly
 
 ROOT = Path(__file__).resolve().parent.parent
 TAX = json.loads((ROOT / "config/tax_rules.json").read_text())
@@ -95,7 +96,8 @@ def project(a, price, rent):
         factor = (1 + a["cost_growth_pct"] / 100) ** year
         # No extra annual cost inflation on percentage fees: rent growth already changes them.
         management = collected * a["management_pct"] / 100
-        maintenance = scheduled * a["maintenance_pct"] / 100
+        maintenance = maintenance_monthly(a, scheduled, year)
+        if maintenance is None: raise ValueError('Maintenance value basis is unavailable')
         regular_cleaning = (a.get('regular_cleaning') or 0) / 12 * factor
         turnover_cleaning = (a.get('turnover_cleaning') or 0) / 12 * factor
         fixed = sum(a.get(k) or 0 for k in ("service_charge", "ground_rent", "insurance", "compliance", "letting_fees", "other_annual_costs")) / 12 * factor + regular_cleaning + turnover_cleaning
@@ -174,6 +176,9 @@ def analyse(inputs, evidence, mode, include_horizons=True):
     sale_valuation = valuation(evidence, 'sale')
     rental_evidence = comparison_summary(inputs, evidence, 'rent')
     sales_evidence = comparison_summary(inputs, evidence, 'sold')
+    from .estimates import get as researched_estimate, basis as estimate_basis
+    rent_estimate = researched_estimate(inputs, evidence, 'rent') if rent is None else None
+    price_estimate = researched_estimate(inputs, evidence, 'sale') if a['purchase_price'] is None and p['asking_price'] is None else None
     if rent is None and rental_valuation:
         rent = rental_valuation
         rent_basis = 'Property-specific rental valuation [valuation-rent]; modelled asking rent, not a confirmed tenancy'
@@ -182,6 +187,10 @@ def analyse(inputs, evidence, mode, include_horizons=True):
         rent = rental_evidence['median']
         rent_basis = 'Median of '+str(rental_evidence['count'])+' matched whole-property advertised monthly rents; not achieved rent. See comparison evidence and source links.'
         flag('warning', 'Rent uses researched asking-rent comparisons', 'Condition, furnishing, bills and letting terms require review; advertised rents do not prove achieved rent.')
+    if rent is None and rent_estimate:
+        rent = rent_estimate['estimate']
+        rent_basis = estimate_basis(rent_estimate)
+        flag('warning', 'Rent uses an evidence-backed Analyst estimate', rent_estimate['limitations'])
     if rent is None and area_rent:
         rent = area_rent
         rent_basis = "Provisional PropertyData area asking-rent average"
@@ -196,8 +205,14 @@ def analyse(inputs, evidence, mode, include_horizons=True):
         if price is None and sales_evidence['median']:
             price = sales_evidence['median']
             price_basis = 'Illustrative purchase at the median of matched completed-sale comparisons; no asking or agreed price supplied'
+        if price is None and price_estimate:
+            price = price_estimate['estimate']
+            price_basis = estimate_basis(price_estimate)
         flag('critical', 'Purchase price is a valuation scenario', 'There is no known listing or agreed price; returns use an automated estimate as the purchase assumption.')
+    cost_value = sale_valuation or price
+    effective_costs(inputs, evidence, a, modelling_basis, price, cost_value)
     missing = [key for key, value in [('monthly_rent', rent), ('purchase_price', price)] if value is None]
+    if a['maintenance_basis']=='value' and a['_maintenance_value'] is None: missing.append('maintenance_value')
     if a['financing'] == 'unknown': missing.append('financing')
     if price and a.get('mortgage_amount') is not None and a['financing'] != 'cash' and a['mortgage_amount'] >= price: missing.append('mortgage_amount')
     if a['refurb_level'] != 'none' and a['refurbishment'] is None and refurbishment_estimate(evidence) is None: missing.append('refurbishment')
@@ -207,6 +222,8 @@ def analyse(inputs, evidence, mode, include_horizons=True):
     a["monthly_rent"], a["purchase_price"] = rent, price
     current_value = sale_valuation or price
     value_basis = 'Property-specific sale valuation [valuation-sale]' if sale_valuation else 'Purchase price used as a proxy because no property-specific sale valuation is available'
+    if price_estimate and not sale_valuation and price == price_estimate['estimate']:
+        value_basis = estimate_basis(price_estimate)
     if sale_valuation and abs(price / sale_valuation - 1) > .15:
         flag('warning', 'Purchase price differs materially from the sale valuation', 'Purchase costs use the supplied price. Future sale scenarios start from the property-specific valuation; check matched sales before relying on it.')
     if a.get('mortgage_amount') is not None and a['financing'] != 'cash': a['ltv_pct'] = a['mortgage_amount'] / price * 100
@@ -318,8 +335,10 @@ def analyse(inputs, evidence, mode, include_horizons=True):
                           "rent_change_pct": round((rent_factor-1)*100, 2), "rate_change_pp": rate_add if loan else 0,
                           "cost_change_pct": round((cost_factor-1)*100, 2),
                           "void_pct": sa["void_pct"], "monthly_cashflow": money(sum(r["cashflow_before_tax"] for r in sr)/12)})
-    denom = (1-a["void_pct"]/100)*(1-a["management_pct"]/100)-a["maintenance_pct"]/100
+    value_maintenance = a.get('maintenance_basis')=='value'
+    denom = (1-a["void_pct"]/100)*(1-a["management_pct"]/100)-(0 if value_maintenance else a["maintenance_pct"]/100)
     fixed = stable[0]["fixed_costs"] + stable[0]["void_costs"]
+    if value_maintenance: fixed += stable[0]['maintenance']
     metrics["break_even_rent"] = money((fixed+debt)/denom) if denom > 0 else None
     tests = [
         {"label": "Net yield on total cost", "target": a["min_net_yield_pct"], "actual": net_yield, "unit": "%", "passes": stable_noi / project_cost * 100 >= a["min_net_yield_pct"]},
@@ -429,7 +448,7 @@ def analyse(inputs, evidence, mode, include_horizons=True):
             "methodology": [
                 "Gross yield = scheduled annual rent / purchase price. Net yield on cost = stabilised rent after vacancies and operating budgets / (price + SDLT + acquisition fees + refurbishment including contingency).",
                 "Cash-on-cash = stabilised annual cash flow after mortgage payments, before income tax / initial cash required including the cash buffer and finance fees.",
-                "Monthly projections start at completion. Initial empty months replace normal occupancy; ongoing vacancy is a fractional monthly allowance after those months. Percentage management fees use collected rent; maintenance uses scheduled rent.",
+                "Monthly projections start at completion. Initial empty months replace normal occupancy; ongoing vacancy is a fractional monthly allowance after those months. Management uses collected rent. Maintenance uses the disclosed rent/value basis; value-based allowances increase with cost inflation.",
                 "Repayment debt includes interest and principal; interest-only principal is repaid at exit. A supplied fixed period resets the rate at expiry using the supplied rate or the explicit stress rise, and repayment payments use the remaining term. Otherwise the base rate stays constant. No new refinancing loan, fees or rent uplift from refurbishment is assumed.",
                 "All costs are cash budgets including VAT where supplied. Maintenance / major works allowances are treated as spent. The separate initial cash buffer is returned at exit, with deficits funded from that buffer first.",
                 "Targets and cost defaults are editable screening assumptions, not industry standards. Sold comparison uses selected unadjusted transaction prices and requires an analyst to assess size, age, condition and location.",

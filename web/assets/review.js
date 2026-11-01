@@ -19,12 +19,17 @@
       $('revision-result').textContent=text;revisionResults.set(record.id,text);
     }else if(text)console.warn(text);
   }
-  async function api(path,options={}){
-    options.headers={...(options.body instanceof FormData?{}:{'Content-Type':'application/json'}),'X-Local-Token':config?.token||'',...options.headers};
+  async function api(path,options={},refreshedToken=false){
+    options.headers={...(options.body instanceof FormData?{}:{'Content-Type':'application/json'}),...options.headers,'X-Local-Token':config?.token||''};
     const response=await fetch(path,options);
     let data;
     try{data=await response.json();}catch(e){throw Error('The local server returned an unreadable response. Check that it is still running.');}
-    if(!response.ok)throw Error(data.error||'The request failed');return data;
+    if(response.status===403&&data.error==='Refresh the local page before saving'){
+      if(refreshedToken)throw Error('Could not reconnect to the local server. Your changes are kept; try again.');
+      config=await api('/api/config');
+      return api(path,options,true);
+    }
+    if(!response.ok)throw Object.assign(Error(data.error||'The request failed'),{status:response.status});return data;
   }
   const post=(path,data)=>api(path,{method:'POST',body:JSON.stringify(data)});
   async function list(){
@@ -104,16 +109,14 @@
     $('report-status').textContent=status[1];
     $('report-status').hidden=false;
     const hasPdf=!!record.artifacts?.pdf;
-    const readyForReview=hasPdf&&!!record.analysis?.available;
-    $('draft-controls').hidden=readyForReview;
+    $('draft-controls').hidden=hasPdf;
     $('photo-panel').hidden=!hasPdf;
-    $('run-panel').hidden=area||readyForReview;
+    $('run-panel').hidden=area||hasPdf;
     $('review-approval').hidden=!hasPdf;
-    const missingRent=record.status==='needs_input';
     const failedGeneration=record.status==='error'&&!hasPdf;
     const check=record.preflight;
-    const checkMessage=check?.summary?'Submission check: '+check.summary:'';
-    const generationMessage=missingRent?'Essential evidence remains unresolved. The research PDF explains what is missing and the next steps.':failedGeneration?'Report generation could not complete. Check the configured provider and retry.':'';
+    const checkMessage=!hasPdf&&check?.summary?'Submission check: '+check.summary:'';
+    const generationMessage=failedGeneration?'Report generation could not complete. Check the configured provider and retry.':'';
     $('generation-error').textContent=[checkMessage,generationMessage].filter(Boolean).join('\n');
     $('generation-error').hidden=!$('generation-error').textContent;
     $('generation-error').classList.toggle('input-check-clear',!generationMessage&&['clear','running'].includes(check?.status));
@@ -257,9 +260,21 @@
   });
   $('revision-form').addEventListener('submit',action(async()=>{
     message('','revision-result');
+    const id=record.id,instruction=$('revision-instruction').value;
     await savePhotos();
-    await post('/api/records/'+record.id+'/revise',{revision:record.revision,provider:config.default_provider||'none',instruction:$('revision-instruction').value});
-    record=await api('/api/records/'+record.id);
+    for(let attempt=0;attempt<2;attempt++){
+      const latest=await api('/api/records/'+id);
+      if(['running','checking_inputs'].includes(latest.status))throw Error('Wait for the current report update to finish, then try again. Your request is kept.');
+      record=latest;
+      try{
+        await post('/api/records/'+id+'/revise',{revision:record.revision,provider:config.default_provider||'none',instruction});
+        break;
+      }catch(e){
+        if(e.status!==400||e.message!=='This record changed. Refresh it before saving.')throw e;
+        if(attempt)throw Error('The report changed again. Your request is kept; please try again.');
+      }
+    }
+    record=await api('/api/records/'+id);
     finishRevision();
     render();
   },'revision-result'));
