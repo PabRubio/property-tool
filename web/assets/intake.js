@@ -1,9 +1,10 @@
 (() => {
-  const form=document.getElementById('brief-form'),entry=document.getElementById('brief-entry'),success=document.getElementById('brief-success');
+  const form=document.getElementById('brief-form'),entry=document.getElementById('brief-entry');
   const $=id=>document.getElementById(id);
   const draftKey='property-screening:brief-draft:v1';
+  const pendingKey=draftKey+':pending:un-static';
+  let submitting=false,transport=null;
   const numberFields=Array.from(form.querySelectorAll('[data-number]'));
-  let token=null,submitting=false;
   function parseNumber(value,kind){
     let text=String(value??'').trim();
     if(!text)return null;
@@ -64,14 +65,20 @@
     $('attachment-field').hidden=!bungalow;form.elements.building_attachment.disabled=!bungalow;
     if(form.elements.property_type.value==='studio')form.elements.bedrooms.value='0';
     form.elements.bedrooms.readOnly=form.elements.property_type.value==='studio';
-    $('submit-brief').textContent=area?'Submit enquiry':'Submit property';
+    if(!submitting)$('submit-brief').textContent=area?'Submit enquiry':'Submit property';
     numberFields.forEach(validateNumber);
+  }
+  function resetSubmission(){
+    submitting=false;$('submit-brief').disabled=false;
+    if(transport){transport.remove();transport=null;}
+    try{sessionStorage.removeItem(pendingKey);}catch(e){/* Storage may be unavailable. */}
+    update();
   }
   form.addEventListener('input',event=>{if(event.target.matches('[data-number]'))validateNumber(event.target);saveDraft();});
   form.addEventListener('change',()=>{update();saveDraft();});
   form.addEventListener('invalid',event=>{const details=event.target.closest('details');if(details)details.open=true;},true);
   window.addEventListener('pagehide',saveDraft);
-  window.addEventListener('pageshow',()=>{$('submit-brief').disabled=false;submitting=false;update();});
+  window.addEventListener('pageshow',resetSubmission);
   function inputs(){
     const f=new FormData(form),num=k=>{
       const value=f.get(k);
@@ -95,28 +102,57 @@
     }
     return out;
   }
+  function briefJSON(){return JSON.stringify({schema_version:2,inputs:inputs()},null,2);}
   $('export-brief').addEventListener('click',()=>{
     numberFields.forEach(validateNumber);
     if(!form.reportValidity())return;
-    const href=URL.createObjectURL(new Blob([JSON.stringify({schema_version:2,inputs:inputs()},null,2)],{type:'application/json'}));
+    const href=URL.createObjectURL(new Blob([briefJSON()],{type:'application/json'}));
     const a=document.createElement('a');a.href=href;a.download='investor-brief.json';a.click();setTimeout(()=>URL.revokeObjectURL(href),5000);
   });
-  form.addEventListener('submit',async event=>{
-    event.preventDefault();if(submitting||entry.hidden||!form.reportValidity())return;
-    const error=$('brief-error');error.hidden=true;
-    if(!token){error.textContent='Unable to connect. Refresh the page or download your brief.';error.hidden=false;return;}
-    $('submit-brief').disabled=true;submitting=true;
+  form.addEventListener('submit',event=>{
+    event.preventDefault();numberFields.forEach(validateNumber);
+    if(submitting||entry.hidden||!form.reportValidity())return;
+    const error=$('brief-error');
+    error.hidden=true;
+    if(!['http:','https:'].includes(location.protocol)){
+      error.textContent='To submit, open this form through the website or a local web server. You can still download your brief as JSON.';
+      error.hidden=false;error.scrollIntoView({block:'nearest'});return;
+    }
     try{
-      const data=inputs();const response=await fetch('/api/records',{method:'POST',headers:{'Content-Type':'application/json','X-Local-Token':token},body:JSON.stringify({inputs:data})});
-      const result=await response.json();if(!response.ok)throw Error(result.error||'Could not save brief');
-      try{sessionStorage.removeItem(draftKey);}catch(e){}
-      form.reset();numberFields.forEach(input=>input.setCustomValidity(''));update();
-      $('success-title').textContent=data.enquiry.kind==='area'?'Enquiry submitted successfully':'Property submitted successfully';
-      success.querySelector('p').textContent=data.enquiry.kind==='area'?'We will contact you to discuss your area and budget.':'Your property brief has been received and is being processed.';
-      entry.hidden=true;success.hidden=false;success.focus({preventScroll:true});window.scrollTo(0,0);
-    }catch(e){error.textContent=e.message;error.hidden=false;}finally{$('submit-brief').disabled=false;submitting=false;}
+      const json=briefJSON();
+      transport=document.createElement('form');transport.hidden=true;
+      transport.action=form.action;transport.method='POST';
+      const message=document.createElement('input');message.type='hidden';message.name='message';message.value=json;
+      transport.appendChild(message);
+      saveDraft();
+      // Un-static's fixed success destination is configured on the provider.
+      // Only acknowledge its return if this tab has a pending submission.
+      try{sessionStorage.setItem(pendingKey,'1');}
+      catch(e){/* Delivery still works; an untracked return won't clear the draft. */}
+      document.body.appendChild(transport);
+      submitting=true;$('submit-brief').disabled=true;$('submit-brief').textContent='Submitting…';
+      // Native POST keeps Un-static's account-free CAPTCHA flow enabled.
+      HTMLFormElement.prototype.submit.call(transport);
+    }catch(e){
+      resetSubmission();
+      error.textContent='Unable to submit your brief. Your answers are still here. Please try again or download your brief as JSON.';
+      error.hidden=false;error.scrollIntoView({block:'nearest'});
+    }
   });
-  if(location.protocol==='file:'){$('submit-brief').hidden=true;$('review-link').href='http://127.0.0.1:8000/review';}
-  else fetch('/api/config').then(r=>{if(!r.ok)throw Error();return r.json();}).then(c=>{token=c.token;}).catch(()=>{});
-  restoreDraft();update();
+  const returned=new URL(location.href);
+  let confirmed=false;
+  try{
+    if(returned.searchParams.get('submitted')==='1'&&sessionStorage.getItem(pendingKey)==='1'){
+      sessionStorage.removeItem(pendingKey);sessionStorage.removeItem(draftKey);confirmed=true;
+    }
+    // An ordinary return or Back is a cancellation, not a later confirmation.
+    sessionStorage.removeItem(pendingKey);
+  }catch(e){/* An unverified return never clears the saved brief. */}
+  if(returned.searchParams.has('submitted')){
+    returned.searchParams.delete('submitted');history.replaceState(null,'',returned.href);
+  }
+  if(confirmed){
+    entry.hidden=true;$('brief-success').hidden=false;$('brief-success').focus();
+  }else restoreDraft();
+  update();
 })();

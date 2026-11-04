@@ -17,6 +17,8 @@
       $('generation-error').hidden=false;
     }else if(target==='revision-result'&&record){
       $('revision-result').textContent=text;revisionResults.set(record.id,text);
+    }else if(target==='import'){
+      if(text)window.alert(text);
     }else if(text)console.warn(text);
   }
   async function api(path,options={},refreshedToken=false){
@@ -34,7 +36,6 @@
   const post=(path,data)=>api(path,{method:'POST',body:JSON.stringify(data)});
   async function list(){
     const data=await api('/api/records');
-    $('submissions-title').hidden=data.records.length===0;
     $('records').innerHTML=data.records.map(r=>`<div class="record-card"><button type="button" class="record-button ${record?.id===r.id?'active':''}" data-record="${esc(r.id)}" ${working?'disabled':''}><strong>${esc(r.address)}</strong><small>${esc(r.postcode)} · ${esc(r.status.replaceAll('_',' '))}</small><small>${esc(r.investor||'No client name')}</small></button><button type="button" class="record-delete" data-delete-record="${esc(r.id)}" data-record-status="${esc(r.status)}" aria-label="Delete ${esc(r.address)}" title="${['running','checking_inputs'].includes(r.status)?'Wait until processing finishes':'Delete'}" ${working||['running','checking_inputs'].includes(r.status)?'disabled':''}><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true" focusable="false"><path d="M3 6h18M9 6V3h6v3M5 6l1 15h12l1-15M10 10v7M14 10v7"/></svg></button></div>`).join('');
     return data.records;
   }
@@ -61,6 +62,7 @@
     return '';
   }
   function controls(){
+    $('import-brief').disabled=working||!config;
     document.querySelectorAll('#record button,#record input,#record textarea,#record select').forEach(el=>el.disabled=busy());
     document.querySelectorAll('[data-record]').forEach(el=>el.disabled=working);
     document.querySelectorAll('[data-delete-record]').forEach(el=>{
@@ -226,6 +228,22 @@
     }
     const records=await list();if(!record)await openLast(records);
   }
+  $('import-brief').addEventListener('click',()=>{$('brief-file').click();});
+  $('brief-file').addEventListener('change',action(async()=>{
+    const input=$('brief-file'),file=input.files[0];
+    if(!file)return;
+    try{
+      if(file.size>1024*1024)throw Error('Choose a brief smaller than 1 MB.');
+      let brief;
+      try{brief=JSON.parse(await file.text());}
+      catch(e){throw Error('This file is not valid JSON. Choose a brief downloaded from the property form.');}
+      if(!brief||brief.schema_version!==2||!brief.inputs||typeof brief.inputs!=='object'||Array.isArray(brief.inputs)){
+        throw Error('Choose a JSON brief downloaded from the property form (version 2).');
+      }
+      const created=await post('/api/records',{inputs:brief.inputs});
+      await open(created.id);
+    }finally{input.value='';}
+  },'import'));
   $('records').addEventListener('click',action(async e=>{
     const remove=e.target.closest('[data-delete-record]');if(remove)return deleteRecord(remove.dataset.deleteRecord);
     const button=e.target.closest('[data-record]');if(button)await open(button.dataset.record);
@@ -294,6 +312,7 @@
     try{
       config=await api('/api/config');
       await openLast(await list(),new URLSearchParams(location.search).get('id'));
+      controls();
       setInterval(()=>{
         if(!document.hidden&&!working)list().then(records=>{if(!record&&!working&&records.length)return openLast(records);}).catch(()=>{});
       },5000);

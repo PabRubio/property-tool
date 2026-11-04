@@ -14,10 +14,11 @@ from reportlab.graphics.shapes import Drawing, Rect, String, Line, PolyLine
 from .providers import now
 from .editor import ReportEditor, FONTS
 from .evidence import ranked_comparables
+from . import branding
 
-INK = colors.HexColor("#18333c")
-TEAL = colors.HexColor("#19766e")
-LIGHT = colors.HexColor("#edf4f2")
+INK = colors.HexColor(branding.INK)
+TEAL = colors.HexColor(branding.GREEN)
+LIGHT = colors.HexColor(branding.TINT)
 RED = colors.HexColor("#a3342a")
 
 
@@ -29,75 +30,72 @@ def pct(n):
     return "Not available" if n is None else "{:.2f}%".format(n)
 
 
-def font(size):
-    for p in ("/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf", "/System/Library/Fonts/Supplemental/Arial.ttf", "C:/Windows/Fonts/arial.ttf"):
-        if Path(p).exists():
-            return ImageFont.truetype(p, size)
-    # ReportLab includes Vera on platforms lacking system fonts.
-    import reportlab
-    p = Path(reportlab.__file__).parent / "fonts/Vera.ttf"
-    return ImageFont.truetype(str(p), size) if p.exists() else ImageFont.load_default()
+def font(size, heading=False):
+    filename='CormorantGaramond-SemiBold.ttf' if heading else 'Inter-Regular.ttf'
+    return ImageFont.truetype(str(branding.FONT_DIR / filename), size)
 
 
 def cashflow_image(record, path, editor=None):
     editor=editor or ReportEditor(record);editor.page=4
     m = record["analysis"]
-    im = PILImage.new("RGB", (1900, 1040), "white")
+    im = PILImage.new("RGB", (1900, 1040), branding.IVORY)
     d = ImageDraw.Draw(im)
     d.rectangle((0,0,1900,120), fill=editor.style["heading_color"])
-    d.text((35,22), editor.text("FIRST-YEAR CASH FLOW | GBP"), fill="white", font=font(34))
+    d.text((35,22), editor.text("FIRST-YEAR CASH FLOW | GBP"), fill=branding.GOLD, font=font(34, heading=True))
     label = "DEMO / FICTIONAL" if record["mode"] == "demo" else "Reviewed" if record.get("approval") else "DRAFT"
-    d.text((35,72), "%s | revision %s | %s" % (label, record["revision"], record["inputs"]["property"]["postcode"]), fill="white", font=font(22))
+    d.text((35,72), "%s | revision %s | %s" % (label, record["revision"], record["inputs"]["property"]["postcode"]), fill=branding.IVORY, font=font(22))
     cols = [("Month", None, 40), ("Rent due", "scheduled_rent", 190), ("Rent lost", "lost_rent", 430), ("Running costs", "operating_costs", 665), ("Mortgage", "debt_payment", 950), ("Before tax", "cashflow_before_tax", 1200), ("Tax budget", "tax_budget", 1430), ("Cash left*", "cashflow", 1660)]
     for title, _, x in cols: d.text((x,146), editor.text(title), fill=editor.style["heading_color"], font=font(23))
     for idx, row in enumerate(m["monthly"][:12]):
         y = 204 + idx * 53
-        if idx % 2 == 0: d.rectangle((20,y-8,1880,y+43), fill="#edf4f2")
+        if idx % 2 == 0: d.rectangle((20,y-8,1880,y+43), fill=branding.TINT)
         for _, key, x in cols:
             val = str(idx+1) if key is None else ("—" if key == "tax_budget" and m["effective_assumptions"]["annual_tax_budget"] is None else "{:,.0f}".format(row[key]))
-            d.text((x,y), val, fill="#a3342a" if key and row[key]<0 else "#18333c", font=font(25))
+            d.text((x,y), val, fill="#a3342a" if key and row[key]<0 else branding.INK, font=font(25))
     y = 866
     d.line((25,y-12,1875,y-12), fill=editor.style["heading_color"], width=3)
     for _, key, x in cols:
         val = "Total" if key is None else ("—" if key == "tax_budget" and m["effective_assumptions"]["annual_tax_budget"] is None else "{:,.0f}".format(sum(r[key] for r in m["monthly"][:12])))
         d.text((x,y), val, fill=editor.style["heading_color"], font=font(25))
     foot = "*Income tax not modelled (—); cash left is BEFORE income tax." if m["effective_assumptions"]["annual_tax_budget"] is None else "*Cash left deducts the supplied tax budget; it is not a tax assessment."
-    d.text((35,942), foot, fill="#43575b", font=font(23))
-    d.text((35,981), "Amounts rounded for display. Initial acquisition cash is shown separately. Full precision is in the CSV / JSON.", fill="#43575b", font=font(21))
+    d.text((35,942), foot, fill=branding.MUTED, font=font(23))
+    d.text((35,981), "Amounts rounded for display. Initial acquisition cash is shown separately. Full precision is in the CSV / JSON.", fill=branding.MUTED, font=font(21))
     im.save(str(path), "PNG")
 
 
 def bar_chart(labels, values, title, width=495, height=200):
+    branding.register_fonts()
     draw = Drawing(width, height)
-    draw.add(String(0, height-12, title, fontName="Helvetica-Bold", fontSize=11, fillColor=INK))
+    draw.add(String(0, height-12, title, fontName=branding.HEADING, fontSize=11, fillColor=INK))
     low, high = min(0, min(values)), max(0, max(values))
     if high == low: high = low + 1
     plot_y, plot_h = 44, height-85
     scale = plot_h/(high-low)
     zero = plot_y-low*scale
-    draw.add(Line(0, zero, width, zero, strokeColor=colors.lightgrey))
+    draw.add(Line(0, zero, width, zero, strokeColor=colors.HexColor(branding.LINE)))
     step = width/len(values)
     for idx,(label,value) in enumerate(zip(labels, values)):
         x = idx*step+step*.2
         top = zero+value*scale
         draw.add(Rect(x, min(top,zero), step*.6, max(1,abs(value*scale)), fillColor=TEAL if value>=0 else RED, strokeColor=None))
-        draw.add(String(x+step*.3, top+(6 if value>=0 else -12), "£{:,.0f}".format(value), textAnchor="middle", fontSize=8, fillColor=INK))
+        draw.add(String(x+step*.3, top+(6 if value>=0 else -12), "£{:,.0f}".format(value), textAnchor="middle", fontName=branding.BODY,fontSize=8, fillColor=INK))
         for j,word in enumerate(label.split("|")[:2]):
-            draw.add(String(x+step*.3, 20-j*10, word, textAnchor="middle", fontSize=8, fillColor=INK))
+            draw.add(String(x+step*.3, 20-j*10, word, textAnchor="middle", fontName=branding.BODY,fontSize=8, fillColor=INK))
     return draw
 
 
 def line_chart(series, title="Local historical prices (GBP)", height=180):
+    branding.register_fonts()
     draw = Drawing(495,height)
-    draw.add(String(0,height-12,title,fontName="Helvetica-Bold",fontSize=10,fillColor=INK))
+    draw.add(String(0,height-12,title,fontName=branding.HEADING,fontSize=10,fillColor=INK))
     vals = [r["index"] for r in series]
     lo,hi = min(vals), max(vals)
     hi = hi if hi != lo else lo+1
     coords = []
     for i,v in enumerate(vals): coords.extend([65+i*410/max(1,len(vals)-1),35+(v-lo)*(height-80)/(hi-lo)])
     if len(vals)>1: draw.add(PolyLine(coords,strokeColor=TEAL,strokeWidth=2))
-    draw.add(String(0,35,"£{:,.0f}".format(lo),fontSize=8)); draw.add(String(0,height-45,"£{:,.0f}".format(hi),fontSize=8))
-    draw.add(String(40,13,series[0]["month"],fontSize=8)); draw.add(String(445,13,series[-1]["month"],fontSize=8))
+    draw.add(String(0,35,"£{:,.0f}".format(lo),fontName=branding.BODY,fontSize=8)); draw.add(String(0,height-45,"£{:,.0f}".format(hi),fontName=branding.BODY,fontSize=8))
+    draw.add(String(40,13,series[0]["month"],fontName=branding.BODY,fontSize=8)); draw.add(String(445,13,series[-1]["month"],fontName=branding.BODY,fontSize=8))
     return draw
 
 
@@ -118,18 +116,18 @@ def calculation_image(record, path, editor=None):
         ('C4', 'DEBT SERVICE COVERAGE', 'A2 / A3', str(v['dscr'])+'x' if v['dscr'] is not None else 'No debt'),
         ('D1', 'ANNUAL CAPITAL GROWTH', 'Analyst scenario assumption; not a forecast', pct(a['price_growth_pct'])),
     ]
-    im = PILImage.new('RGB', (1900, 1100), 'white'); d = ImageDraw.Draw(im)
+    im = PILImage.new('RGB', (1900, 1100), branding.IVORY); d = ImageDraw.Draw(im)
     d.rectangle((0,0,1900,120), fill=editor.style['heading_color'])
-    d.text((35,25), editor.text('INVESTMENT MODEL | CALCULATION WORKING'), fill='white', font=font(35))
-    d.text((35,76), 'Stabilised first-year prices | GBP | Before income tax | Revision '+str(record['revision']), fill='white', font=font(22))
+    d.text((35,25), editor.text('INVESTMENT MODEL | CALCULATION WORKING'), fill=branding.GOLD, font=font(35, heading=True))
+    d.text((35,76), 'Stabilised first-year prices | GBP | Before income tax | Revision '+str(record['revision']), fill=branding.IVORY, font=font(22))
     for title,x in [('CELL',30),('MEASURE',135),('FORMULA / BASIS',800),('RESULT',1640)]: d.text((x,148),editor.text(title),fill=editor.style['heading_color'],font=font(23))
     for i, row in enumerate(rows):
         y=206+i*72
-        if i%2==0: d.rectangle((20,y-12,1880,y+54),fill='#edf4f2')
+        if i%2==0: d.rectangle((20,y-12,1880,y+54),fill=branding.TINT)
         for column,(value,x,size) in enumerate(zip(row,[30,135,800,1640],[23,24,23,25])):
             if column in (1,2):value=editor.text(value,'explanation' if column==2 else 'label')
             d.text((x,y),value,fill=editor.style['heading_color'],font=font(size))
-    d.text((35,1030),'Display amounts are rounded. Formulas use unrounded monthly values; cash required includes the reserve.',fill='#43575b',font=font(23))
+    d.text((35,1030),'Display amounts are rounded. Formulas use unrounded monthly values; cash required includes the reserve.',fill=branding.MUTED,font=font(23))
     im.save(str(path),'PNG')
 
 
@@ -177,7 +175,7 @@ class ReportPages:
         c.setStrokeColor(self.accent);c.line(45,self.top-27,A4[0]-45,self.top-27)
         self.text(title,45,self.top-41,self.width,60,min(self.editor.style['heading_size'],18) if len(title)>45 else self.editor.style['heading_size'],True,kind='heading')
         if subtitle: self.text(subtitle,45,self.top-101,self.width,32,9,kind='explanation' if title!='Property investment screening' else None)
-        c.setStrokeColor(colors.lightgrey);c.line(45,42,A4[0]-45,42)
+        c.setStrokeColor(colors.HexColor(branding.LINE));c.line(45,42,A4[0]-45,42)
         self.text('%s | r%s | %s' % (self.record['id'][:10],self.record['revision'],now()[:10]),45,32,self.width-90,15,8)
         self.text('Page %s'%self.page,A4[0]-96,32,51,15,8,True)
         return self.top-140
@@ -198,7 +196,7 @@ class ReportPages:
             for value,w in zip(row,widths):
                 self.text(value,x+5,y-5,w-10,row_height-8,size,i==0,kind='label' if i==0 or (len(row)==2 and x==45) else None)
                 x+=w
-            self.canvas.setStrokeColor(colors.lightgrey);self.canvas.line(45,y-row_height,45+sum(widths),y-row_height)
+            self.canvas.setStrokeColor(colors.HexColor(branding.LINE));self.canvas.line(45,y-row_height,45+sum(widths),y-row_height)
             y-=row_height
         return y-12
 
@@ -211,7 +209,7 @@ class ReportPages:
             ids = match.group(1).split(', '); labels = []
             for sid in ids:
                 url = sources.get(sid,{}).get('url','')
-                labels.append('<a href="'+escape(url,{'"':'&quot;'})+'" color="#19766e">'+sid+'</a>' if url.startswith(('http://','https://')) else sid)
+                labels.append('<a href="'+escape(url,{'"':'&quot;'})+'" color="'+branding.LINK+'">'+sid+'</a>' if url.startswith(('http://','https://')) else sid)
             return '['+', '.join(labels)+']'
         value = re.sub(r'\[([a-zA-Z0-9_, -]+)\]',cite,value)
         style=ParagraphStyle('flow',fontName=self.editor.style['font_family'],fontSize=size*self.editor.style['font_scale'],leading=size*1.45*self.editor.style['font_scale'],textColor=self.ink,splitLongWords=True,allowWidows=0,allowOrphans=0)
@@ -256,16 +254,17 @@ class ReportPages:
 
 
 def yield_chart(values, height=155):
+    branding.register_fonts()
     drawing=Drawing(495,height)
     low,high=min(0,min(values)),max(1,max(values));scale=(height-70)/(high-low)
     zero=40-low*scale
-    drawing.add(Line(0,zero,495,zero,strokeColor=colors.lightgrey))
+    drawing.add(Line(0,zero,495,zero,strokeColor=colors.HexColor(branding.LINE)))
     labels=['Gross yield','Net yield on cost','Cash-on-cash']
     for i,value in enumerate(values):
         x=82+i*165;top=zero+value*scale
         drawing.add(Rect(x-38,min(top,zero),76,max(1,abs(top-zero)),fillColor=TEAL if value>=0 else RED,strokeColor=None))
-        drawing.add(String(x,top+(9 if value>=0 else -13),pct(value),fontSize=12,fontName='Helvetica-Bold',textAnchor='middle',fillColor=INK))
-        drawing.add(String(x,12,labels[i],fontSize=10,textAnchor='middle',fillColor=INK))
+        drawing.add(String(x,top+(9 if value>=0 else -13),pct(value),fontSize=12,fontName=branding.BOLD,textAnchor='middle',fillColor=INK))
+        drawing.add(String(x,12,labels[i],fontName=branding.BODY,fontSize=10,textAnchor='middle',fillColor=INK))
     return drawing
 
 

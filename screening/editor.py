@@ -2,15 +2,17 @@
 import copy
 import hashlib
 import re
+from . import branding
 
 
-STYLE_DEFAULTS = {'accent_color': '#19766e', 'heading_color': '#18333c',
-                  'font_family': 'Helvetica', 'font_scale': 1.0, 'heading_size': 23}
-FONTS = {'Helvetica': 'Helvetica-Bold', 'Times-Roman': 'Times-Bold', 'Courier': 'Courier-Bold'}
+STYLE_DEFAULTS = {'accent_color': branding.GOLD, 'heading_color': branding.GREEN,
+                  'font_family': branding.BODY, 'font_scale': 1.0, 'heading_size': 23}
+FONTS = {'Inter': branding.BOLD, 'Helvetica': 'Helvetica-Bold', 'Times-Roman': 'Times-Bold', 'Courier': 'Courier-Bold'}
 
 
 class ReportEditor:
     def __init__(self, record):
+        branding.register_fonts()
         self.settings = record.get('presentation', {})
         self.style = dict(STYLE_DEFAULTS, **self.settings.get('style', {}))
         self.catalog = {}
@@ -60,7 +62,7 @@ def apply_presentation(record, text_edits, style_changes, page_order):
                 raise ValueError('Report colours must use six-digit hex codes')
         elif key == 'font_family':
             if not isinstance(value, str) or value not in FONTS:
-                raise ValueError('Choose Helvetica, Times-Roman or Courier for the report font')
+                raise ValueError('Choose Inter, Helvetica, Times-Roman or Courier for the report font')
         elif isinstance(value, bool) or not isinstance(value, (int, float)) or not ((.8 <= value <= 1.2) if key == 'font_scale' else (16 <= value <= 26)):
             raise ValueError('Report text size is outside the supported page layout')
         style[key] = value

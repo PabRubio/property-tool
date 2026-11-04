@@ -13,6 +13,7 @@ from .editor import FONTS
 from .evidence import matched_profile, property_history
 from .photos import photo_groups
 from .providers import now
+from . import branding
 from .source_report import CitationIndex
 
 
@@ -21,13 +22,13 @@ class Photograph(Flowable):
         super().__init__();self.path=path;self.width=width;self.height=height;self.placeholder=placeholder
 
     def draw(self):
-        self.canv.setFillColor(colors.HexColor('#edf4f2'))
+        self.canv.setFillColor(colors.HexColor(branding.TINT))
         self.canv.rect(0,0,self.width,self.height,fill=1,stroke=0)
         if self.path and self.path.is_file():
             self.canv.drawImage(str(self.path),0,0,self.width,self.height,preserveAspectRatio=True,anchor='c')
         else:
-            label=Paragraph(escape(self.placeholder),ParagraphStyle('photo-placeholder',fontName='Helvetica',fontSize=9,
-                            leading=11,alignment=1,textColor=colors.HexColor('#43575b')))
+            label=Paragraph(escape(self.placeholder),ParagraphStyle('photo-placeholder',fontName=branding.BODY,fontSize=9,
+                            leading=11,alignment=1,textColor=colors.HexColor(branding.MUTED)))
             _,height=label.wrap(self.width-12,self.height)
             label.drawOn(self.canv,6,(self.height-height)/2)
 
@@ -46,7 +47,9 @@ class Layout:
     def paragraph(self,text,size=9,kind='explanation',bold=False,space=5):
         value=self.editor.text(text,kind) if kind else str(text)
         size*=self.editor.style['font_scale'];self.minimum_font=min(self.minimum_font,size)
-        style=ParagraphStyle('report',fontName=FONTS[self.editor.style['font_family']] if bold else self.editor.style['font_family'],
+        family=self.editor.style['font_family']
+        face=branding.HEADING if kind=='heading' and family==branding.BODY else FONTS[family] if bold else family
+        style=ParagraphStyle('report',fontName=face,
                              fontSize=size,leading=size*1.22,textColor=self.ink,spaceAfter=space)
         return Paragraph(self.citations.markup(value),style)
 
@@ -58,8 +61,8 @@ class Layout:
         cells=[[self.paragraph(v,size,'label' if i==0 or j==0 else None,i==0,0) if not isinstance(v,Flowable) else v
                 for j,v in enumerate(row)] for i,row in enumerate(rows)]
         table=Table(cells,colWidths=widths,hAlign='LEFT')
-        table.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('BACKGROUND',(0,0),(-1,0),colors.HexColor('#edf4f2')),
-                                   ('LINEBELOW',(0,0),(-1,-1),.3,colors.HexColor('#d9e3e0')),
+        table.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('BACKGROUND',(0,0),(-1,0),colors.HexColor(branding.TINT)),
+                                   ('LINEBELOW',(0,0),(-1,-1),.3,colors.HexColor(branding.LINE)),
                                    ('LEFTPADDING',(0,0),(-1,-1),4),('RIGHTPADDING',(0,0),(-1,-1),4),
                                    ('TOPPADDING',(0,0),(-1,-1),padding),('BOTTOMPADDING',(0,0),(-1,-1),padding)]))
         table.spaceAfter=7
@@ -68,7 +71,7 @@ class Layout:
     def linked(self,label,url,size=8.5):
         p=self.paragraph(label,size,kind=None,space=0)
         if str(url or '').startswith(('http://','https://')):
-            p=Paragraph('<a href="'+escape(url,{'"':'&quot;'})+'" color="#19766e">'+escape(str(label))+'</a>',p.style)
+            p=Paragraph('<a href="'+escape(url,{'"':'&quot;'})+'" color="'+branding.LINK+'">'+escape(str(label))+'</a>',p.style)
         return p
 
     def comparisons(self,rows,kind):
@@ -121,9 +124,12 @@ class Layout:
         for number,(canonical,titlep,title_height,sub,sub_height,subtitle_top,body_top,story) in enumerate(prepared,1):
             if number>1:pdf.showPage()
             self.editor.page=canonical
-            pdf.setFillColor(self.ink);pdf.setFont(FONTS[self.editor.style['font_family']],10)
+            branding.page_background(pdf,A4[0],A4[1])
+            branding.header_logo(pdf,45,A4[1]-43)
+            pdf.setFillColor(colors.HexColor(branding.GOLD));pdf.setFont(FONTS[self.editor.style['font_family']],10)
             import os
             pdf.drawString(45,A4[1]-43,'Lacewing Analytics')
+            pdf.setFillColor(colors.HexColor(branding.IVORY))
             pdf.setFont(self.editor.style['font_family'],9)
             label='DEMO / FICTIONAL' if self.record['mode']=='demo' else 'REVIEWED' if final else 'DRAFT / FOR REVIEW'
             pdf.drawRightString(A4[0]-45,A4[1]-43,label)
@@ -133,8 +139,9 @@ class Layout:
             y=body_top
             for item in story:
                 _,height=item.wrap(self.width,y-self.bottom);item.drawOn(pdf,45,y-height);y-=height+item.getSpaceAfter()
-            pdf.setStrokeColor(colors.HexColor('#d9e3e0'));pdf.line(45,42,A4[0]-45,42)
-            pdf.setFont('Helvetica',8);pdf.drawString(45,29,self.record['id'][:10]+' | r'+str(self.record['revision'])+' | '+now()[:10])
+            pdf.setStrokeColor(colors.HexColor(branding.LINE));pdf.line(45,42,A4[0]-45,42)
+            pdf.setFillColor(colors.HexColor(branding.MUTED))
+            pdf.setFont(self.editor.style['font_family'],8);pdf.drawString(45,29,self.record['id'][:10]+' | r'+str(self.record['revision'])+' | '+now()[:10])
             pdf.drawRightString(A4[0]-45,29,str(number)+' / 10')
         pdf.save();Path(path).write_bytes(stream.getvalue())
         self.record['report_citations']=self.citations.used

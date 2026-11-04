@@ -107,7 +107,7 @@ def create_app(data_dir=None):
     def index(): return send_from_directory(str(ROOT/"web"),"index.html")
 
     @app.route("/review")
-    def review_page(): return send_from_directory(str(ROOT/"web"),"review.html")
+    def review_page(): return send_from_directory(str(ROOT/"web"),"index.html")
 
     @app.route("/terms")
     @app.route("/privacy")
@@ -117,7 +117,7 @@ def create_app(data_dir=None):
     @app.route("/assets/<path:name>")
     def assets(name): return send_from_directory(str(ROOT/"web/assets"),name)
 
-    # Relative assets work when index.html is opened directly from disk.
+    # Both local dashboard URLs share the same assets and API.
     @app.route("/api/config")
     def config():
         return jsonify(token=token,defaults=defaults(),default_provider=default_provider(),fields=[dict(zip(("key","label","group","default","min","max"),f)) for f in FIELDS],brand="Lacewing Analytics",

@@ -2,6 +2,7 @@
 import re
 from .evidence import matched_profile
 from .photos import photo_groups
+from . import branding
 
 
 def investigative(item):
@@ -45,7 +46,8 @@ def generate_internal(record,path):
     from reportlab.platypus import Paragraph
     from reportlab.lib.styles import ParagraphStyle
     index=CitationIndex(record,seed=True)
-    style=ParagraphStyle('internal',fontName='Helvetica',fontSize=8.5,leading=11,spaceAfter=8,textColor='#18333c')
+    branding.register_fonts()
+    style=ParagraphStyle('internal',fontName=branding.BODY,fontSize=8.5,leading=11,spaceAfter=8,textColor=branding.INK)
     items=review_items(record)
     story=[Paragraph(index.markup(item['text']+' ['+', '.join(item['source_ids'])+']'),style) for item in items]
     single_page(record,path,'Internal review',story,'Staff preparation only. Retain material assumptions and investment risks in the investor report.')

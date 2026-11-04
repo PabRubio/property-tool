@@ -5,6 +5,7 @@ from urllib.parse import urlparse
 from reportlab.platypus import Paragraph, Table
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.pagesizes import A4
+from . import branding
 
 
 def analyst_wording(text):
@@ -59,7 +60,7 @@ class CitationIndex:
                 if key not in self.by_url:
                     entry=dict(source,number=len(self.used)+1);self.used.append(entry);self.by_url[key]=entry
                 entry=self.by_url[key];url=source.get('url','');number=str(entry['number'])
-                label='<a href="'+escape(url,{'"':'&quot;'})+'" color="#19766e">'+number+'</a>' if url.startswith(('https://','http://')) else number
+                label='<a href="'+escape(url,{'"':'&quot;'})+'" color="'+branding.LINK+'">'+number+'</a>' if url.startswith(('https://','http://')) else number
                 if label not in labels:labels.append(label)
             return '['+', '.join(labels)+']'
         return re.sub(r'\[([a-zA-Z0-9_, -]+)\]',cite,escape(analyst_wording(text)).replace('\n','<br/>'))
@@ -67,8 +68,9 @@ class CitationIndex:
 
 def generate_sources(record, path):
     # The client needs a reference list, not the internal research transcript.
-    body=ParagraphStyle('source',fontName='Helvetica',fontSize=8.2,leading=9.5)
-    small=ParagraphStyle('metadata',fontName='Helvetica',fontSize=7.5,leading=9,textColor='#43575b')
+    branding.register_fonts()
+    body=ParagraphStyle('source',fontName=branding.BODY,fontSize=8.2,leading=9.5,textColor=branding.INK)
+    small=ParagraphStyle('metadata',fontName=branding.BODY,fontSize=7.5,leading=9,textColor=branding.MUTED)
     story=[];sources=record.get('report_citations')
     if sources is None:
         sources=list({s.get('url') or s['id']:s for s in references(record)}.values())
@@ -77,7 +79,7 @@ def generate_sources(record, path):
         title=str(source.get('title',source['id']))
         if len(title)>110:title=title[:107].rsplit(' ',1)[0]+'…'
         url=source.get('url','');heading=escape(analyst_wording(label+title))
-        if url.startswith(('https://','http://')):heading='<a href="'+escape(url,{'"':'&quot;'})+'" color="#19766e">'+heading+'</a>'
+        if url.startswith(('https://','http://')):heading='<a href="'+escape(url,{'"':'&quot;'})+'" color="'+branding.LINK+'">'+heading+'</a>'
         date=str(source.get('retrieved_at') or '')[:10] or 'date not recorded'
         metadata=(urlparse(url).hostname or 'Supplied reference')+' | '+date+' | '+source.get('status','unverified')
         entry=Table([[Paragraph(heading,body)],[Paragraph(escape(analyst_wording(metadata)),small)]],colWidths=[(A4[0]-100)/2],
@@ -94,24 +96,28 @@ def single_page(record,path,title,story,intro):
     import io
     from pathlib import Path
     from reportlab.pdfgen import canvas
+    from reportlab.lib import colors
+    branding.register_fonts()
     width=(A4[0]-100)/2
     measured=[(item,item.wrap(width,700)[1]+item.getSpaceAfter()) for item in story]
     # Balanced columns, keeping individual paragraphs intact.
     split=min(range(len(measured)+1),key=lambda n:max(sum(h for _,h in measured[:n]),sum(h for _,h in measured[n:])))
     columns=[measured[:split],measured[split:]]
-    small=ParagraphStyle('intro',fontName='Helvetica',fontSize=8,leading=10,textColor='#43575b')
+    small=ParagraphStyle('intro',fontName=branding.BODY,fontSize=8,leading=10,textColor=branding.MUTED)
     subtitle=Paragraph(escape(record['inputs']['property']['address']+' | revision '+str(record['revision']))+'<br/>'+escape(intro),small)
     _,height=subtitle.wrap(A4[0]-80,100);top=A4[1]-92-height
     if max(sum(h for _,h in col) for col in columns)>top-45:
         raise ValueError(title+' exceeds its one-page layout. Shorten the internal wording / reference titles; previous report kept.')
     stream=io.BytesIO();pdf=canvas.Canvas(stream,pagesize=A4)
     pdf.setTitle('Lacewing Analytics — '+title);pdf.setAuthor('Lacewing Analytics')
-    pdf.setFillColorRGB(.094,.2,.235);pdf.setFont('Helvetica-Bold',10);pdf.drawString(40,A4[1]-35,'Lacewing Analytics')
-    pdf.setFont('Helvetica-Bold',18);pdf.drawString(40,A4[1]-62,title)
+    branding.page_background(pdf,A4[0],A4[1],header_height=45)
+    branding.header_logo(pdf,40,A4[1]-35)
+    pdf.setFillColor(colors.HexColor(branding.GOLD));pdf.setFont(branding.BOLD,10);pdf.drawString(40,A4[1]-35,'Lacewing Analytics')
+    pdf.setFillColor(colors.HexColor(branding.GREEN));pdf.setFont(branding.HEADING,18);pdf.drawString(40,A4[1]-62,title)
     subtitle.drawOn(pdf,40,A4[1]-77-height)
     for number,col in enumerate(columns):
         y=top
         for item,height in col:
             item.drawOn(pdf,40+number*(width+20),y-height+item.getSpaceAfter());y-=height
-    pdf.setFont('Helvetica',8);pdf.drawString(40,28,title+' | 1 / 1')
+    pdf.setFillColor(colors.HexColor(branding.MUTED));pdf.setFont(branding.BODY,8);pdf.drawString(40,28,title+' | 1 / 1')
     pdf.save();Path(path).write_bytes(stream.getvalue())
