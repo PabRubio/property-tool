@@ -198,6 +198,35 @@ class ResearchTests(unittest.TestCase):
 
 
 class PDFTests(unittest.TestCase):
+    def test_annual_projection_shows_equity_before_selling_costs_and_tax(self):
+        cases = [
+            ('interest_only', 25, 5, {1: '£75,000.00', 2: '£88,125.00', 10: '£219,723.66'}),
+            ('repayment', 25, 0, {1: '£70,000.00', 2: '£77,500.00', 10: '£137,500.00'}),
+            ('cash', None, 0, {1: '£250,000.00', 2: '£250,000.00', 10: '£250,000.00'}),
+            ('interest_only', 5, -10, {1: '£-12,500.00', 2: '£-35,000.00', 10: '£-150,330.39'}),
+        ]
+        for financing, deposit, growth, expected in cases:
+            with self.subTest(financing=financing, growth=growth), tempfile.TemporaryDirectory() as folder:
+                r = record()
+                r['inputs']['assumptions'].update(
+                    financing=financing, deposit_pct=deposit, interest_rate_pct=0,
+                    mortgage_term_years=25, holding_years=3, price_growth_pct=growth,
+                    selling_fee_pct=10, sale_legal_fees=10000, sale_tax_budget=5000)
+                r['analysis'] = analyse(r['inputs'], r['evidence'], 'manual')
+                r['narrative'] = deterministic(r)
+                artifacts = generate_report(r, folder)
+                page = subprocess.check_output(
+                    ['pdftotext', '-layout', '-f', '4', '-l', '4',
+                     str(Path(folder) / artifacts['pdf']), '-'], text=True)
+                self.assertIn('Projected equity', ' '.join(page.split()))
+                rows = [line.split() for line in page.splitlines()]
+                equity = {int(row[0]): row[-1] for row in rows
+                          if len(row) == 6 and row[0].isdigit()}
+                for year, amount in expected.items():
+                    self.assertEqual(equity.get(year), amount)
+                self.assertEqual(artifacts['page_count'], 10)
+                self.assertFalse(artifacts['condensed'])
+
     def test_missing_rent_delivers_explicitly_incomplete_research(self):
         from screening.incomplete_report import generate_incomplete
         r=record();r['inputs']['assumptions']['monthly_rent']=None

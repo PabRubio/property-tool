@@ -266,7 +266,8 @@ def render_report(record,path,folder,editor,final,cashflow):
                     table([['Known cash-flow input','Amount'],['Monthly rent',gbp(v['monthly_rent'])],['Stabilised operating income / year',gbp(v['stabilised_noi'])],['Monthly debt payment',gbp(v['monthly_debt_payment'])],['Monthly cash before tax',gbp(v['monthly_cashflow_before_tax'])]])]
         annual=next((h['annual'] for h in m['horizons'] if h['available'] and h['years']==10),m['annual'])
         story=[Image(io.BytesIO(cashflow.read_bytes()),width=W,height=W*1040/1900),Spacer(1,8),
-               table([['Year','Rent received','Running costs','Debt service','Cash before tax']]+[[r['year'],gbp(r['collected_rent']),gbp(r['operating_costs']),gbp(r['interest']+r['principal']),gbp(r['cashflow_before_tax'])] for r in annual], [33,118,118,118,W-387],padding=3),
+               table([['Year','Rent received','Running costs','Debt service','Cash before tax','Projected equity']]+[[r['year'],gbp(r['collected_rent']),gbp(r['operating_costs']),gbp(r['interest']+r['principal']),gbp(r['cashflow_before_tax']),gbp(r['property_value']-r['loan_balance'])] for r in annual], [30,91,91,91,91,W-394],padding=3),
+               L.paragraph('Projected equity is the year-end property value less the outstanding mortgage, before selling costs and tax. Property growth is a scenario; equity is not rental cash flow. [model, assumptions]',8.5),
                L.paragraph('Base vacancy: '+pct(a['void_pct'])+' plus '+str(a['initial_void_months'])+' initial empty months. The CSV contains full monthly schedules for each ownership period; income tax is excluded unless a budget was supplied. [assumptions, model]',8.5)]
         if a['financing']=='cash':story.append(L.paragraph('Cash purchase: no mortgage payments.'))
         else:

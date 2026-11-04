@@ -101,7 +101,7 @@ The complete investment PDF has exactly ten pages. Compact tables and concise co
 1. Property introduction: address, cover photograph and three boxes for location/nearby places, accommodation and price with its basis.
 2. The complete investment overview, verdict, summary and qualifications, followed by returns and growth projections.
 3. Acquisition/financing costs, upfront safety provision, input bases and bidding guidance.
-4. Cash-flow spreadsheet image, annual projections and mortgage/reset assumptions.
+4. Cash-flow spreadsheet image, annual projections with year-end equity (projected property value less outstanding mortgage, before selling costs and tax), and mortgage/reset assumptions.
 5. Quantified downside tests, interest-rate comparisons, interest coverage and ownership-period returns.
 6. Property facts, environmental/designation risks, licensing status and additional photographs.
 7. Subject sale history, local price chart, nearby market activity and best five asking-price comparisons.

@@ -4,7 +4,7 @@
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <style>:root{color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}html{scroll-padding-top:env(safe-area-inset-top,0px)}body{margin:0;padding:0;font:14px -apple-system,BlinkMacSystemFont,sans-serif;background:#fff;color:#000}img{max-width:100%}[hidden]:not([hidden=until-found i]){display:none!important}</style><style id="property-brief-styles">
-#property-brief{--green:#012c21;--green-light:#0b3a30;--gold:#d9ad5f;--gold-dark:#8a6628;--ivory:#f6f1e6;--ink:#14211d;--muted:#586861;--line:#dcd3bf;--tint:#eee7d9;--white:#fff;--error:#9b352b;color-scheme:light;font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;color:var(--ink);background:var(--ivory);line-height:1.5;font-size:15px}
+#property-brief{--green:var(--hd);--green-light:var(--hd);--gold:#d9ad5f;--gold-dark:var(--gd);--ivory:transparent;--muted:var(--mut);--line:var(--ln);--tint:var(--tn);--white:var(--wh);--error:var(--er);--fb:var(--fbd);font-family:Inter,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;color:var(--ink);background:transparent;line-height:1.5;font-size:15px;-webkit-text-size-adjust:100%;text-size-adjust:100%}
 #property-brief *{box-sizing:border-box}
 #property-brief h1,#property-brief h2,#property-brief h3{font-family:'Cormorant Garamond',Georgia,serif;font-weight:600;color:var(--green)}
 #property-brief h1{font-size:34px;letter-spacing:-.8px;line-height:1.2;margin:10px 0 16px}
@@ -17,16 +17,21 @@
 #property-brief label{display:block;font-size:13px;font-weight:600}
 #property-brief .required-marker{color:var(--error);font-weight:700}
 #property-brief .field-help{display:block;margin-top:6px;color:var(--muted);font-size:12px;font-weight:400}
-#property-brief input,#property-brief select,#property-brief textarea{display:block;width:100%;margin-top:6px;border:1px solid #b4ad9b;background:var(--white);border-radius:0;padding:10px;color:var(--ink);font:inherit;font-weight:400;min-height:40px;accent-color:var(--green)}
+#property-brief input,#property-brief select,#property-brief textarea{display:block;width:100%;margin-top:6px;border:1px solid var(--fb);background:var(--white);border-radius:0;padding:10px;color:var(--ink);font:inherit;font-weight:400;min-height:40px;accent-color:var(--gold-dark);-webkit-appearance:none;appearance:none}
+#property-brief select{padding-right:36px;background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='8' viewBox='0 0 12 8'%3E%3Cpath d='M1 1.5l5 5 5-5' fill='none' stroke='%23a0988a' stroke-width='1.8'/%3E%3C/svg%3E");background-repeat:no-repeat;background-position:right 12px center;background-size:12px 8px;text-overflow:ellipsis}
+#property-brief input[type=number]{-moz-appearance:textfield}#property-brief input[type=number]::-webkit-outer-spin-button,#property-brief input[type=number]::-webkit-inner-spin-button{-webkit-appearance:none;margin:0}
+#property-brief input[type=checkbox]{-webkit-appearance:auto;appearance:auto}
+#property-brief textarea{line-height:1.45}
+@media(max-width:700px){#property-brief input,#property-brief select,#property-brief textarea{font-size:16px}}
 #property-brief input:focus,#property-brief select:focus,#property-brief textarea:focus{outline:2px solid var(--gold-dark);outline-offset:2px}
 #property-brief input::placeholder,#property-brief textarea::placeholder{color:var(--muted);opacity:1}
 #property-brief button:focus-visible,#property-brief a:focus-visible,#property-brief summary:focus-visible{outline:2px solid var(--gold-dark);outline-offset:3px}
 #property-brief .check{display:flex;align-items:flex-start;gap:9px;margin-top:16px;font-weight:400}
 #property-brief .check input{width:17px;min-height:17px;margin:3px 0 0;flex-shrink:0}
-#property-brief button,#property-brief .button{font:inherit;font-size:14px;font-weight:600;border:1px solid var(--gold);border-radius:0;padding:10px 16px;background:var(--gold);color:var(--green);cursor:pointer;text-decoration:none;display:inline-block}
-#property-brief button:hover,#property-brief .button:hover{background:#e4bd7a;border-color:#e4bd7a}
-#property-brief .secondary{background:var(--white);color:var(--green);border-color:var(--green)}
-#property-brief .secondary:hover{background:var(--tint);border-color:var(--green)}
+#property-brief button,#property-brief .button{font:inherit;font-size:14px;font-weight:600;border:1px solid var(--gold);border-radius:0;padding:10px 16px;background:var(--gold);color:#012c21;cursor:pointer;text-decoration:none;display:inline-block;-webkit-appearance:none;appearance:none}
+#property-brief button:hover,#property-brief .button:hover{background:#e4bd7a;border-color:#e4bd7a;color:#012c21}
+#property-brief .secondary{background:transparent;color:var(--green);border-color:var(--green)}
+#property-brief .secondary:hover{background:var(--tint);border-color:var(--green);color:var(--green)}
 #property-brief button:disabled{opacity:.5;cursor:not-allowed}
 #property-brief .actions{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:14px 0}
 #property-brief .error{color:var(--error);font-size:13px;margin-top:12px}
@@ -71,9 +76,9 @@
 <link href="https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,500;0,600;1,500&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
 <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
 <style>
-:root{--gr:#012c21;--gr2:#0b3a30;--gold:#d9ad5f;--gd:#8a6628;--iv:#f6f1e6;--wh:#fff;--ink:#14211d;--mut:#586861;--ln:#dcd3bf;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
-@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--iv:#0a1511;--wh:#0f1d18;--ink:#eee8d8;--mut:#a4b1aa;--ln:#25362f;--gd:#d9ad5f;color-scheme:dark}}
-:root[data-theme="dark"]{--iv:#0a1511;--wh:#0f1d18;--ink:#eee8d8;--mut:#a4b1aa;--ln:#25362f;--gd:#d9ad5f;color-scheme:dark}
+:root{--hd:#012c21;--tn:#eee7d9;--er:#9b352b;--fbd:#b4ad9b;--gr:#012c21;--gr2:#0b3a30;--gold:#d9ad5f;--gd:#8a6628;--iv:#f6f1e6;--wh:#fff;--ink:#14211d;--mut:#586861;--ln:#dcd3bf;color-scheme:light;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media(prefers-color-scheme:dark){:root:not([data-theme="light"]){--hd:#eee8d8;--tn:#16271f;--er:#f0a093;--fbd:#4a5f55;--iv:#0a1511;--wh:#0f1d18;--ink:#eee8d8;--mut:#a4b1aa;--ln:#25362f;--gd:#d9ad5f;color-scheme:dark}}
+:root[data-theme="dark"]{--hd:#eee8d8;--tn:#16271f;--er:#f0a093;--fbd:#4a5f55;--iv:#0a1511;--wh:#0f1d18;--ink:#eee8d8;--mut:#a4b1aa;--ln:#25362f;--gd:#d9ad5f;color-scheme:dark}
 *,*::before,*::after{box-sizing:border-box}html{scroll-behavior:smooth;scroll-padding-top:90px}
 body{margin:0;background:var(--iv);color:var(--ink);font:17px/1.65 Inter,system-ui,-apple-system,"Segoe UI",sans-serif}
 body::before{content:"";position:fixed;inset:0 0 auto;height:env(safe-area-inset-top,0px);background:var(--gr);z-index:41}
@@ -109,7 +114,7 @@ section.sx{padding:116px 0;position:relative;overflow:hidden}@media(max-width:80
 .ix li{display:flex;gap:18px;align-items:baseline;padding:20px 0;border-bottom:1px solid rgba(217,173,95,.3);transition:padding .3s,color .3s}.ix li:hover{padding-left:12px;color:var(--gold)}.ix i{font:italic 500 26px "Cormorant Garamond",Georgia,serif;color:var(--gold);min-width:34px}.ix span{font:500 24px "Cormorant Garamond",Georgia,serif}
 .badge{display:inline-block;border:1px solid var(--gd);color:var(--gd);font-size:11px;letter-spacing:.2em;text-transform:uppercase;padding:6px 12px}
 .kp{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));margin:30px 0}.kp div{padding:6px 24px;border-left:1px solid var(--ln)}.kp b{font:500 46px "Cormorant Garamond",Georgia,serif;display:block;line-height:1.1}.kp span{font-size:14px;color:var(--mut)}
-.pg{padding:84px 0 40px}.pg h1{font-size:clamp(44px,6vw,84px);margin:14px 0 20px}.ld{font:500 clamp(22px,2.6vw,30px)/1.4 "Cormorant Garamond",Georgia,serif;max-width:820px;color:var(--ink)}
+.pg{padding-top:84px;padding-bottom:40px}.pg h1{font-size:clamp(44px,6vw,84px);margin:14px 0 20px}.ld{font:500 clamp(22px,2.6vw,30px)/1.4 "Cormorant Garamond",Georgia,serif;max-width:820px;color:var(--ink)}
 .rw{display:grid;grid-template-columns:90px 1fr;gap:24px;padding:34px 0;border-top:1px solid var(--ln)}.rw .nm{font-size:64px;opacity:.85}.rw h3{font-size:32px;margin-bottom:8px}.rw p{margin:0}
 .bx{background:var(--wh);border:1px solid var(--ln);padding:30px}
 .dg{display:grid;grid-template-columns:1fr 1.15fr;gap:28px;margin-top:30px;align-items:start}@media(max-width:940px){.dg{grid-template-columns:1fr}}
@@ -160,7 +165,7 @@ footer{background:var(--gr);color:#c9d4cb;padding:56px 0;font-size:13px}footer .
 html.hm header{position:fixed;left:0;right:0;transform:translateY(-110%);transition:transform .45s cubic-bezier(.22,.61,.36,1)}html.hm.past header{transform:none}
 .lh{--u:clamp(.68px,min(100vw/1280,100vh/800),1.72px);--u:clamp(.68px,min(100vw/1280,100dvh/800),1.72px);--t:var(--u);--hair:max(1px,var(--u));--gl:rgba(217,173,95,.26);--ivr:#f6f1e6;--em:cubic-bezier(.16,1,.3,1);--el:cubic-bezier(.65,0,.35,1);--es:cubic-bezier(.22,.61,.36,1);position:relative;height:100vh;height:100dvh;min-height:560px;overflow:hidden;background:#01140f;color:var(--ivr)}
 .hbg{position:absolute;inset:0}.hbg canvas{display:block;width:100%;height:100%}
-.hsc{position:absolute;inset:0;pointer-events:none;background:linear-gradient(to bottom,rgba(1,20,15,.4),transparent 24%,transparent 50%,rgba(1,20,15,.8))}
+.hsc{position:absolute;inset:0;pointer-events:none;background:linear-gradient(to right,rgba(1,20,15,.82),rgba(1,20,15,.5) 13%,transparent 30%),radial-gradient(ellipse 62% 40% at 50% 80%,rgba(1,20,15,.86),rgba(1,20,15,.6) 55%,transparent 100%),linear-gradient(to bottom,rgba(1,20,15,.78),rgba(1,20,15,.28) 20%,rgba(1,20,15,.18) 45%,rgba(1,20,15,.55) 62%,rgba(1,20,15,.9))}
 .hgr{position:absolute;inset:0;pointer-events:none;opacity:.12;mix-blend-mode:overlay;background-image:url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='160' height='160'><filter id='n'><feTurbulence type='fractalNoise' baseFrequency='.9' numOctaves='2' stitchTiles='stitch'/></filter><rect width='160' height='160' filter='url(%23n)'/></svg>")}
 .hfm{position:absolute;left:calc(30*var(--u));top:calc(30*var(--u));right:calc(30*var(--u));bottom:calc(31*var(--u))}
 .hfl{position:absolute;background:var(--gl)}.hlt{left:calc(26*var(--u));right:calc(26*var(--u));top:0;height:var(--hair)}.hlb2{left:calc(26*var(--u));right:calc(26*var(--u));bottom:0;height:var(--hair)}.hll{top:calc(26*var(--u));bottom:calc(26*var(--u));left:0;width:var(--hair)}.hlr{top:calc(26*var(--u));bottom:calc(26*var(--u));right:0;width:var(--hair)}
@@ -176,17 +181,17 @@ html.hm header{position:fixed;left:0;right:0;transform:translateY(-110%);transit
 .henq svg{width:calc(7*var(--t));height:calc(11*var(--t));fill:#d9ad5f;margin-right:calc(7*var(--t))}
 .hmenu{padding:0 calc(24*var(--t)) 0 calc(21*var(--t));background:var(--ivr);color:#012c21;clip-path:polygon(0 0,calc(100% - 15*var(--t)) 0,100% calc(15*var(--t)),100% 100%,0 100%)}.hmenu svg{width:calc(10*var(--t));height:calc(10*var(--t));fill:#012c21;margin-right:calc(7*var(--t))}
 .hidx{position:absolute;left:calc(10.5*var(--t));top:50%;transform:translateY(calc(-50% + 1.5*var(--t)));list-style:none;margin:0;padding:0}.hidx li{height:calc(26.6*var(--t));display:flex;align-items:center;position:relative}
-.hidx button{background:none;border:0;padding:0;cursor:pointer;font:600 calc(10*var(--t))/1 Inter,sans-serif;letter-spacing:calc(1.3*var(--t));color:rgba(246,241,230,.34);transition:color .3s}.hidx button:hover,.hidx .on button{color:var(--ivr)}
+.hidx button{background:none;border:0;padding:0;cursor:pointer;font:600 calc(10*var(--t))/1 Inter,sans-serif;letter-spacing:calc(1.3*var(--t));color:rgba(246,241,230,.7);transition:color .3s}.hidx button:hover,.hidx .on button{color:var(--ivr)}
 .hidx .on::before{content:"";position:absolute;left:calc(-13.5*var(--t));top:50%;width:calc(6*var(--t));height:calc(7*var(--t));transform:translateY(-50%);background:#d9ad5f}
 .hhero{position:absolute;left:0;right:0;bottom:max(7.98%,calc(59*var(--t)));display:flex;flex-direction:column;align-items:center;text-align:center}
-.hhead{margin:0;font:600 calc(40*var(--t))/calc(38*var(--t)) "Cormorant Garamond",Georgia,serif;letter-spacing:calc(2.4*var(--t));padding-left:calc(2.4*var(--t));text-transform:uppercase;color:var(--ivr);text-shadow:0 2px 24px rgba(0,0,0,.35)}
-.hrow{display:block;overflow:hidden}.hrise{display:block;transition:transform .5s var(--em)}.hblurb{margin:calc(15.56*var(--t)) 0 0;font:400 calc(11.1*var(--t))/calc(19.7*var(--t)) Inter,sans-serif;color:rgba(246,241,230,.78);max-width:calc(420*var(--t));transition:opacity .4s,transform .4s}
+.hhead{margin:0;font:600 calc(40*var(--t))/calc(38*var(--t)) "Cormorant Garamond",Georgia,serif;letter-spacing:calc(2.4*var(--t));padding-left:calc(2.4*var(--t));text-transform:uppercase;color:var(--ivr);text-shadow:0 1px 3px rgba(1,20,15,.7),0 2px 28px rgba(1,20,15,.6)}
+.hrow{display:block;overflow:hidden}.hrise{display:block;transition:transform .5s var(--em)}.hblurb{margin:calc(15.56*var(--t)) 0 0;font:400 calc(11.1*var(--t))/calc(19.7*var(--t)) Inter,sans-serif;color:rgba(246,241,230,.92);text-shadow:0 1px 8px rgba(1,20,15,.8);max-width:calc(420*var(--t));transition:opacity .4s,transform .4s}
 .swapping .hrise{transform:translateY(112%)}.swapping .hblurb{opacity:0;transform:translateY(calc(7*var(--t)))}
 .hcta{margin-top:calc(23*var(--t));position:relative;width:calc(190*var(--t));height:calc(41*var(--t));display:flex;align-items:center;justify-content:center;text-decoration:none;color:var(--ivr)}
 .hcg{position:absolute;inset:0;background:rgba(246,241,230,.04);-webkit-backdrop-filter:blur(calc(12*var(--t)));backdrop-filter:blur(calc(12*var(--t)));clip-path:polygon(calc(3*var(--t)) 0,calc(100% - 10*var(--t)) 0,100% calc(10*var(--t)),100% calc(100% - 3*var(--t)),calc(100% - 3*var(--t)) 100%,calc(10*var(--t)) 100%,0 calc(100% - 10*var(--t)),0 calc(3*var(--t)));transition:background .3s}.hcta:hover .hcg{background:rgba(246,241,230,.08)}
 .hce{position:absolute;inset:0;width:100%;height:100%;overflow:visible}.hce path{fill:none;stroke:rgba(217,173,95,.42);stroke-width:1;transition:stroke .3s}.hcta:hover .hce path{stroke:rgba(217,173,95,.85)}
 .hci{position:relative;display:flex;align-items:center}.hci svg{width:calc(7*var(--t));height:calc(11*var(--t));fill:#d9ad5f;margin-right:calc(6*var(--t))}
-.hnote{position:absolute;left:calc(26*var(--t));bottom:calc(58*var(--t));font:600 calc(8.5*var(--t))/1 Inter,sans-serif;letter-spacing:.16em;color:rgba(246,241,230,.46)}
+.hnote{position:absolute;left:calc(26*var(--t));bottom:calc(58*var(--t));font:600 calc(8.5*var(--t))/1 Inter,sans-serif;letter-spacing:.16em;color:rgba(246,241,230,.72)}
 .hdock{position:absolute;left:0;right:0;bottom:0;height:calc(47*var(--t))}.hrule{position:absolute;left:0;right:0;top:0;height:var(--hair);background:var(--gl)}.hdv{position:absolute;top:0;bottom:0;width:var(--hair);background:rgba(217,173,95,.28)}.hdv1{left:calc(116*var(--t))}.hdv2{right:calc(139*var(--t))}
 .hdock a,.hdock button{display:flex;align-items:center;text-decoration:none;background:none;border:0;padding:0;cursor:pointer;color:rgba(246,241,230,.82);transition:color .3s}.hdock a:hover,.hdock button:hover{color:#fff}
 .hpause{position:absolute;left:calc(26*var(--t));top:0;bottom:0}.hpause svg{width:calc(10*var(--t));height:calc(11*var(--t));fill:currentColor;margin-right:calc(10*var(--t))}.hpause .ip{display:none}.hpause.paused .ip{display:block}.hpause.paused .ia{display:none}
@@ -393,7 +398,7 @@ html.hm header{position:fixed;left:0;right:0;transform:translateY(-110%);transit
 <p>These Terms of Service govern the use of Lacewing Analytics' website and the property research, screening and analytical services we provide.</p>
 <p>In these terms, "Lacewing Analytics", "we", "us" and "our" refer to the business operating under that name. "Client", "you" and "your" refer to any individual or organisation submitting a property for assessment or engaging our services.</p>
 <p>By submitting a property enquiry, requesting research or purchasing a service, you acknowledge that you have read these terms. Where a paid service is involved, the specific scope, deliverables, fees and applicable terms will be confirmed before the engagement begins.</p>
-<p><strong>Business details:</strong> [Insert full legal name, trading name, business address and contact email.]</p>
+<p><strong>Business details:</strong> Lacewing Analytics. Contact: <a href="mailto:lacewing.analytics@gmail.com">lacewing.analytics@gmail.com</a>.</p>
 <h3>2. Our Services</h3>
 <p>Lacewing Analytics provides property screening and investment research, which may include:</p>
 <ul>
@@ -512,9 +517,8 @@ html.hm header{position:fixed;left:0;right:0;transform:translateY(-110%);transit
 <h3>16. Contact</h3>
 <p>For questions about these terms or our services, contact:</p>
 <p><strong>Lacewing Analytics</strong></p>
-<p>Email: [Insert business email]</p>
-<p>Address: [Insert business address]</p>
-<p>Legal business name: [Insert full legal name or sole trader details]</p>
+<p>Email: <a href="mailto:lacewing.analytics@gmail.com">lacewing.analytics@gmail.com</a></p>
+<p>Business name: Lacewing Analytics</p>
 </article></div></div>
 
 <div class="v legal-page" id="v-privacy"><div class="w"><article class="legal-document" id="privacy-document">
@@ -525,9 +529,8 @@ html.hm header{position:fixed;left:0;right:0;transform:translateY(-110%);transit
 <p>Lacewing Analytics provides property screening, investment research and related analytical services.</p>
 <p>This Privacy Notice explains how we collect, use, store and protect personal information when you visit our website, submit a property enquiry, request our services or communicate with us.</p>
 <p>For the purposes of applicable UK data protection law, the business operating Lacewing Analytics is responsible for determining how and why personal data is processed.</p>
-<p><strong>Business name:</strong> [Insert full legal name or sole trader details]</p>
-<p><strong>Contact email:</strong> [Insert business email]</p>
-<p><strong>Business address:</strong> [Insert business address]</p>
+<p><strong>Business name:</strong> Lacewing Analytics</p>
+<p><strong>Contact email:</strong> <a href="mailto:lacewing.analytics@gmail.com">lacewing.analytics@gmail.com</a></p>
 <p>In this notice, "we", "us" and "our" refer to Lacewing Analytics.</p>
 <h3>2. Information We Collect</h3>
 <p>Depending on how you interact with us, we may collect the following information.</p>
@@ -645,7 +648,7 @@ Where our website uses analytics, security logs or similar technologies, we may 
 <li>Complain to the Information Commissioner's Office.</li>
 </ul>
 <p>These rights are subject to applicable legal conditions and exceptions.</p>
-<p>To exercise a right, contact us at [Insert business email]. We may need to verify your identity before responding.</p>
+<p>To exercise a right, contact us at <a href="mailto:lacewing.analytics@gmail.com">lacewing.analytics@gmail.com</a>. We may need to verify your identity before responding.</p>
 <p>You can find information about your rights and how to complain on the Information Commissioner's Office website: https://ico.org.uk/</p>
 <h3>12. Marketing Communications</h3>
 <p>We may respond to enquiries and send communications necessary to administer a requested service or existing client relationship.</p>
@@ -665,9 +668,8 @@ Where our website uses analytics, security logs or similar technologies, we may 
 <h3>16. Contact Us</h3>
 <p>For questions about this notice or how we process personal information, contact:</p>
 <p><strong>Lacewing Analytics</strong></p>
-<p>Email: [Insert business email]</p>
-<p>Address: [Insert business address]</p>
-<p>Legal business name: [Insert full legal name or sole trader details]</p>
+<p>Email: <a href="mailto:lacewing.analytics@gmail.com">lacewing.analytics@gmail.com</a></p>
+<p>Business name: Lacewing Analytics</p>
 </article></div></div>
 </main>
 <footer><div class="w"><img data-i="L" alt="Lacewing Analytics logo"><div><p style="margin:0 0 10px">Property screening and investment research.</p><p style="margin:0">Illustrative figures are for demonstration only. Research is for information and is not financial, legal, tax or valuation advice, and returns are never guaranteed. Draft site content is subject to approval.</p></div></div></footer>
