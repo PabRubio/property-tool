@@ -40,12 +40,14 @@ def months_ago(months, today=None):
     return date(year, month + 1, min(today.day, calendar.monthrange(year, month + 1)[1]))
 
 
-def recent_sale(row):
-    try: return months_ago(18) <= date.fromisoformat(str(row.get('date', ''))[:10]) <= date.today()
+def recent_sale(row, today=None):
+    today = today or date.today()
+    try: return months_ago(18,today) <= date.fromisoformat(str(row.get('date', ''))[:10]) <= today
     except ValueError: return False
 
 
-def assess(row, property_, kind):
+def assess(row, property_, kind, today=None):
+    today = today or date.today()
     reasons = []
     if not row.get('source_url'): reasons.append('No source link')
     if row.get('bedrooms') != property_['bedrooms']: reasons.append('Bedroom count differs or is unknown')
@@ -55,13 +57,13 @@ def assess(row, property_, kind):
     if address_key(row.get('address', ''), row.get('postcode', '')) in {address_key(property_['address']), address_key(property_['address'], property_['postcode'])}:
         reasons.append('Subject property, not an independent comparison')
     if kind == 'sold':
-        if not recent_sale(row): reasons.append('Sale outside the last 18 months or undated')
+        if not recent_sale(row,today): reasons.append('Sale outside the last 18 months or undated')
         area, subject = row.get('floor_area_sqm'), property_.get('floor_area_sqm')
         if not area or not subject or not .75 <= area / subject <= 1.25: reasons.append('Floor area differs or is unverified')
         if property_['tenure'] != 'unknown' and row.get('tenure') != property_['tenure']: reasons.append('Tenure differs or is unknown')
         if property_.get('new_build') and row.get('transaction_class') != 'new_build': reasons.append('New-build transaction status differs or is unknown')
     else:
-        try: age = (date.today() - date.fromisoformat(str(row.get('observed_at') or row.get('date') or '')[:10])).days
+        try: age = (today - date.fromisoformat(str(row.get('observed_at') or row.get('date') or '')[:10])).days
         except ValueError: age = 999
         if not 0 <= age <= 90: reasons.append(('Rental' if kind == 'rent' else 'For-sale')+' listing is undated or over 90 days old')
         # PD's monthly sample is a whole-property asking-rent dataset. Web evidence
@@ -75,10 +77,10 @@ def assess(row, property_, kind):
     return reasons
 
 
-def comparison_summary(inputs, evidence, kind):
+def comparison_summary(inputs, evidence, kind, today=None):
     rows = [dict(c) for c in evidence.get('comparables', []) if c.get('kind') == kind]
     rows += [dict(c, source_id='comparable-'+str(i+1)) for i,c in enumerate(inputs.get('comparables', [])) if c.get('selected') and c.get('kind') == kind]
-    if kind == 'sold': rows = [r for r in rows if recent_sale(r)]
+    if kind == 'sold': rows = [r for r in rows if recent_sale(r,today)]
     unique = {}
     for row in rows:
         if not isinstance(row.get('amount'), (int, float)) or row['amount'] <= 0: continue
@@ -94,7 +96,7 @@ def comparison_summary(inputs, evidence, kind):
             street=re.sub(re.escape(postcode)+r'\s*$','',street,flags=re.I).strip()
             key=('numbered',address_key(street),address_key(postcode))
         else:key = address_key(row['address']) if numbered or not postcode else (address_key(street), address_key(postcode), row['amount'], row.get('bedrooms'))
-        row['limitations'] = assess(row, inputs['property'], kind)
+        row['limitations'] = assess(row, inputs['property'], kind,today)
         old = unique.get(key)
         if old is None: unique[key] = row
         else:

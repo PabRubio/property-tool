@@ -12,7 +12,7 @@ def analyst_wording(text):
     return re.sub(r'\bcodex\b','Analyst',str(text),flags=re.I)
 
 
-def references(record):
+def references(record, today=None):
     sources=list(record['evidence'].get('sources',[]))
     if record['evidence'].get('location'):
         from urllib.parse import quote
@@ -24,7 +24,7 @@ def references(record):
     from .comparisons import comparison_summary
     import hashlib
     for kind in ('asking','rent','sold'):
-        for row in comparison_summary(record['inputs'],record['evidence'],kind)['candidates'][:5]:
+        for row in comparison_summary(record['inputs'],record['evidence'],kind,today)['candidates'][:5]:
             for url in row.get('evidence_urls') or [row.get('source_url')]:
               if url:
                 sources.append({'id':'listing-'+hashlib.sha256(url.encode()).hexdigest()[:12],
@@ -44,8 +44,8 @@ def references(record):
 
 class CitationIndex:
     """Short numbered references, deduplicated by URL, shared by both PDFs."""
-    def __init__(self,record,seed=False):
-        self.sources={s['id']:s for s in references(record)}
+    def __init__(self,record,seed=False,today=None):
+        self.sources={s['id']:s for s in references(record,today)}
         self.used=list(record.get('report_citations',[])) if seed else []
         self.by_url={s.get('url') or s['id']:s for s in self.used}
 

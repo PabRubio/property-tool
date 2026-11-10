@@ -1,5 +1,6 @@
 """Ten readable report pages, with measured layout and no overflow pages."""
 import io
+from datetime import date
 from pathlib import Path
 from xml.sax.saxutils import escape
 
@@ -15,6 +16,8 @@ from .photos import photo_groups
 from .providers import now
 from . import branding
 from .source_report import CitationIndex
+from .report_visuals import (Stack, Columns, ResponsiveTable, Cover, Chart, numeric_cell,
+                             PAPER, GREEN, GOLD, MUTED, PHOTO, RED)
 
 
 class Photograph(Flowable):
@@ -22,51 +25,66 @@ class Photograph(Flowable):
         super().__init__();self.path=path;self.width=width;self.height=height;self.placeholder=placeholder
 
     def draw(self):
-        self.canv.setFillColor(colors.HexColor(branding.TINT))
+        self.canv.setFillColor(PHOTO)
         self.canv.rect(0,0,self.width,self.height,fill=1,stroke=0)
         if self.path and self.path.is_file():
             self.canv.drawImage(str(self.path),0,0,self.width,self.height,preserveAspectRatio=True,anchor='c')
         else:
-            label=Paragraph(escape(self.placeholder),ParagraphStyle('photo-placeholder',fontName=branding.BODY,fontSize=9,
+            label=Paragraph(escape(self.placeholder),ParagraphStyle('photo-placeholder',fontName=branding.BODY,fontSize=7.5,
                             leading=11,alignment=1,textColor=colors.HexColor(branding.MUTED)))
             _,height=label.wrap(self.width-12,self.height)
             label.drawOn(self.canv,6,(self.height-height)/2)
 
 
 class Layout:
-    width=A4[0]-90
-    body_top=A4[1]-118
-    bottom=55
+    width=A4[0]-57
+    body_top=A4[1]-112.5
+    bottom=42
 
-    def __init__(self,record,editor):
-        self.record=record;self.editor=editor;self.citations=CitationIndex(record)
+    def __init__(self,record,editor,as_of=None):
+        self.as_of=as_of or now()
+        self.today=date.fromisoformat(self.as_of[:10])
+        self.record=record;self.editor=editor;self.citations=CitationIndex(record,seed=bool(as_of),today=self.today)
         self.ink=colors.HexColor(editor.style['heading_color'])
         self.accent=colors.HexColor(editor.style['accent_color'])
         self.minimum_font=99
+        self.density=1
 
     def paragraph(self,text,size=9,kind='explanation',bold=False,space=5):
         value=self.editor.text(text,kind) if kind else str(text)
-        size*=self.editor.style['font_scale'];self.minimum_font=min(self.minimum_font,size)
+        size*=self.editor.style['font_scale']*self.density;self.minimum_font=min(self.minimum_font,size)
         family=self.editor.style['font_family']
         face=branding.HEADING if kind=='heading' and family==branding.BODY else FONTS[family] if bold else family
         style=ParagraphStyle('report',fontName=face,
-                             fontSize=size,leading=size*1.22,textColor=self.ink,spaceAfter=space)
+                             fontSize=size,leading=size*1.22,textColor=self.ink if bold or kind=='heading' else colors.HexColor(branding.INK),spaceAfter=space,
+                             splitLongWords=False)
         return Paragraph(self.citations.markup(value),style)
 
-    def heading(self,text):return self.paragraph(text,11,'heading',True,5)
+    def heading(self,text):return self.paragraph(text,15,'heading',True,5)
+
+    def chart(self,kind,title,labels,values,height=130,note='',unit='money'):
+        if not values or any(value is None for value in values):return None
+        import re
+        return Chart(kind,self.editor.text(title,'explanation' if re.search(r'\d',title) else 'heading'),
+                     [self.editor.text(label,'label') if not re.search(r'\d',str(label)) else str(label) for label in labels],
+                     values,height,note,unit,self.editor.style['font_family'],self.accent)
 
     def prose(self,item):return self.paragraph(item['text']+' ['+', '.join(item['source_ids'])+']',kind=None)
 
     def table(self,rows,widths,size=8.5,padding=4):
-        cells=[[self.paragraph(v,size,'label' if i==0 or j==0 else None,i==0,0) if not isinstance(v,Flowable) else v
+        cells=[[self.paragraph(v,size,'label' if i==0 or j==0 else None,i==0 or str(row[0])=='Total',0) if not isinstance(v,Flowable) else v
                 for j,v in enumerate(row)] for i,row in enumerate(rows)]
-        table=Table(cells,colWidths=widths,hAlign='LEFT')
-        table.setStyle(TableStyle([('VALIGN',(0,0),(-1,-1),'TOP'),('BACKGROUND',(0,0),(-1,0),colors.HexColor(branding.TINT)),
-                                   ('LINEBELOW',(0,0),(-1,-1),.3,colors.HexColor(branding.LINE)),
-                                   ('LEFTPADDING',(0,0),(-1,-1),4),('RIGHTPADDING',(0,0),(-1,-1),4),
-                                   ('TOPPADDING',(0,0),(-1,-1),padding),('BOTTOMPADDING',(0,0),(-1,-1),padding)]))
-        table.spaceAfter=7
-        return table
+        import copy
+        for i,row in enumerate(cells):
+            for j,cell in enumerate(row):
+                if isinstance(cell,Paragraph) and i>0:
+                    cell.style=copy.copy(cell.style)
+                    if j and numeric_cell(rows[i][j]):cell.style.alignment=2
+                    value=str(rows[i][j])
+                    if value=='FAIL' or value.startswith(('£-','-£','−£')) or (value.startswith(('-', '−')) and numeric_cell(value) and not value.endswith('%')):
+                        cell.style.textColor=RED
+                    cells[i][j]=Paragraph(cell.text,cell.style)
+        return ResponsiveTable(cells,widths,padding*self.density)
 
     def linked(self,label,url,size=8.5):
         p=self.paragraph(label,size,kind=None,space=0)
@@ -99,8 +117,27 @@ class Layout:
         # Table supports a small stack of paragraphs inside a cell.
         cells=[]
         for row in result:
-            cells.append([Table([[part] for part in cell],colWidths=[149],style=[('LEFTPADDING',(0,0),(-1,-1),0),('RIGHTPADDING',(0,0),(-1,-1),0),('TOPPADDING',(0,0),(-1,-1),0),('BOTTOMPADDING',(0,0),(-1,-1),0)]) if isinstance(cell,list) else cell for cell in row])
-        return self.table(cells,[157,67,35,59,66,self.width-384],8.2,3)
+            cells.append([Stack(cell) if isinstance(cell,list) else cell for cell in row])
+        return self.table(cells,[160,68,36,66,72,136],8.2,2.5)
+
+    def page_header(self,title,subtitle):
+        density=self.density
+        self.density=1
+        titlep=self.paragraph(title,22.5*self.editor.style['heading_size']/23,'heading',True,0)
+        titlep.style.fontName=FONTS[self.editor.style['font_family']]
+        titlep=Paragraph(titlep.text,titlep.style)
+        if titlep.minWidth()>self.width:
+            raise ValueError('Page title exceeds the fixed ten-page layout. No text was cut.')
+        _,title_height=titlep.wrap(self.width,1000)
+        sub=self.paragraph(subtitle,8.25,kind=None,space=0) if subtitle.strip() else None
+        if sub:
+            sub.style.textColor=MUTED
+            sub=Paragraph(sub.text,sub.style)
+        sub_height=sub.wrap(self.width,1000)[1] if sub else 0
+        subtitle_top=min(A4[1]-88,A4[1]-55-title_height-5.5)
+        body_top=min(self.body_top,subtitle_top-sub_height-12)
+        self.density=density
+        return titlep,title_height,sub,sub_height,subtitle_top,body_top
 
     def render(self,pages,path,final):
         # Measure before writing: excessive content is an editing error, never
@@ -108,12 +145,7 @@ class Layout:
         prepared=[]
         for canonical,title,subtitle,story in pages:
             self.editor.page=canonical
-            titlep=self.paragraph(title,self.editor.style['heading_size'],'heading',True,0)
-            _,title_height=titlep.wrap(self.width,100)
-            sub=self.paragraph(subtitle,8.5,kind=None,space=0) if subtitle.strip() else None
-            sub_height=sub.wrap(self.width,100)[1] if sub else 0
-            subtitle_top=A4[1]-68-title_height-4
-            body_top=min(self.body_top,subtitle_top-sub_height-8) if sub else subtitle_top-4
+            titlep,title_height,sub,sub_height,subtitle_top,body_top=self.page_header(title,subtitle)
             height=sum(item.wrap(self.width,body_top-self.bottom)[1]+item.getSpaceAfter() for item in story)
             if height>body_top-self.bottom:
                 raise ValueError('Report page %s (%s) needs shorter wording: %.0f points exceeds the fixed ten-page layout. No text was cut.' % (canonical,title,height))
@@ -124,40 +156,51 @@ class Layout:
         for number,(canonical,titlep,title_height,sub,sub_height,subtitle_top,body_top,story) in enumerate(prepared,1):
             if number>1:pdf.showPage()
             self.editor.page=canonical
-            branding.page_background(pdf,A4[0],A4[1])
-            branding.header_logo(pdf,45,A4[1]-43)
-            pdf.setFillColor(colors.HexColor(branding.GOLD));pdf.setFont(FONTS[self.editor.style['font_family']],10)
-            import os
-            pdf.drawString(45,A4[1]-43,'Lacewing Analytics')
+            branding.page_background(pdf,A4[0],A4[1],header_height=42)
+            pdf.setFillColor(GREEN);pdf.rect(0,0,12,A4[1]-42,fill=1,stroke=0)
+            branding.header_logo(pdf,63,A4[1]-26)
+            pdf.setFillColor(GOLD);pdf.setFont(branding.HEADING,15.75)
+            pdf.drawString(63,A4[1]-26.25,'Lacewing Analytics')
             pdf.setFillColor(colors.HexColor(branding.IVORY))
-            pdf.setFont(self.editor.style['font_family'],9)
+            pdf.setFont(self.editor.style['font_family'],7.125)
             label='DEMO / FICTIONAL' if self.record['mode']=='demo' else 'REVIEWED' if final else 'DRAFT / FOR REVIEW'
-            pdf.drawRightString(A4[0]-45,A4[1]-43,label)
-            pdf.setStrokeColor(self.accent);pdf.line(45,A4[1]-55,A4[0]-45,A4[1]-55)
-            titlep.drawOn(pdf,45,A4[1]-68-title_height)
-            if sub:sub.drawOn(pdf,45,subtitle_top-sub_height)
+            pdf.drawRightString(A4[0]-28.5,A4[1]-24,label)
+            titlep.drawOn(pdf,28.5,A4[1]-55-title_height)
+            if sub:sub.drawOn(pdf,28.5,subtitle_top-sub_height)
             y=body_top
             for item in story:
-                _,height=item.wrap(self.width,y-self.bottom);item.drawOn(pdf,45,y-height);y-=height+item.getSpaceAfter()
-            pdf.setStrokeColor(colors.HexColor(branding.LINE));pdf.line(45,42,A4[0]-45,42)
+                _,height=item.wrap(self.width,y-self.bottom);item.drawOn(pdf,28.5,y-height);y-=height+item.getSpaceAfter()
             pdf.setFillColor(colors.HexColor(branding.MUTED))
-            pdf.setFont(self.editor.style['font_family'],8);pdf.drawString(45,29,self.record['id'][:10]+' | r'+str(self.record['revision'])+' | '+now()[:10])
-            pdf.drawRightString(A4[0]-45,29,str(number)+' / 10')
+            pdf.setFont(self.editor.style['font_family'],6.75);pdf.drawString(28.5,18.4,self.record['id'][:10]+' · r'+str(self.record['revision'])+' · '+self.as_of[:10])
+            pdf.drawCentredString(A4[0]/2,18.4,'The Signature Edition')
+            pdf.setFillColor(self.ink);pdf.setFont(self.editor.style['font_family'],10.5)
+            pdf.drawRightString(A4[0]-28.5,16.9,str(number)+' / 10')
         pdf.save();Path(path).write_bytes(stream.getvalue())
         self.record['report_citations']=self.citations.used
-        return {'page_count':len(pages),'condensed':False,'layout_version':4,'minimum_font_size':self.minimum_font}
+        return {'page_count':len(pages),'condensed':False,'layout_version':5,'report_style':'signature','minimum_font_size':self.minimum_font}
 
 
-def render_report(record,path,folder,editor,final,cashflow):
-    from .reports import gbp,pct,yield_chart,line_chart
+def render_report(record,path,folder,editor,final,cashflow=None,as_of=None):
+    from .reports import gbp,pct
     from .comparisons import comparison_summary,months_ago
     from .comparisons import maps_url
     from .internal_review import investigative
     m=record['analysis'];v=m['metrics'];a=m['effective_assumptions'];p=m.get('effective_property',record['inputs']['property'])
-    e=record['evidence'];n=record['narrative']['content'];investor=record['inputs']['investor'];L=Layout(record,editor);W=L.width
+    e=record['evidence'];n=record['narrative']['content'];investor=record['inputs']['investor'];L=Layout(record,editor,as_of);W=L.width
     pages=[]
     def add(number,title,subtitle,build):
-        editor.page=number;pages.append((number,title,subtitle,build()))
+        editor.page=number
+        body_top=L.page_header(title,subtitle)[-1]
+        base={1:1,2:1.07,3:1.03,4:1,5:1.2,6:1.1,7:1.08,8:.96,9:1.08,10:.94}[number]
+        # A bounded print typescale accommodates different narratives. Explicit
+        # font-size overrides remain exact; no content is removed to make it fit.
+        factors=(1,.98,.96,.94,.92,.90) if editor.style['font_scale']==1 else (1,)
+        for factor in factors:
+            L.density=base*factor
+            story=build()
+            height=sum(item.wrap(W,10000)[1]+item.getSpaceAfter() for item in story)
+            if height<=body_top-L.bottom:break
+        pages.append((number,title,subtitle,story))
     span=lambda values:gbp(values[0])+'–'+gbp(values[1]) if values else 'Not established'
     def table(rows,widths=None,**kw):return L.table(rows,widths or [220,W-220],**kw)
     cover,gallery=photo_groups(record)
@@ -209,19 +252,29 @@ def render_report(record,path,folder,editor,final,cashflow):
         price=gbp(p['asking_price'] if p['asking_price'] is not None else v['purchase_price'])
         price_basis=({'listed':'Supplied asking price','under_offer':'Supplied offer price','proposed':'Supplied proposed purchase price'}.get(p.get('price_status'),'Supplied listing / offer price') if p['asking_price'] is not None else m['price_basis'])
         if p.get('price_status')=='proposed':price_basis+='; modelling assumption, not a verified market valuation'
-        story=[L.paragraph('Prepared for '+(investor['name'] or 'Client')+' | Goal: '+(investor['goal'] or 'Not supplied')),
-               L.linked(p['address']+', '+p['postcode'],maps_url(p['address']+', '+p['postcode']),10),Spacer(1,9),
-               Photograph(folder/cover['filename'] if cover else None,W,240),Spacer(1,8)]
+        prepared=L.paragraph('Prepared for '+(investor['name'] or 'Client')+' | Goal: '+(investor['goal'] or 'Not supplied'),8.25)
+        address=L.linked(p['address']+', '+p['postcode'],maps_url(p['address']+', '+p['postcode']),21)
+        left=[L.heading('Location and nearby amenities'),L.paragraph(loc,10)]
+        right=[L.heading('Size and accommodation'),L.paragraph(details,10)]
+        price_title=L.heading('Price and basis')
+        price_text=L.paragraph(price+' — '+price_basis+'. [inputs, model]',10)
+        # Keep the map link live while using the approved gold cover typography.
+        prepared.style.textColor=PAPER
+        prepared=Paragraph(prepared.text,prepared.style)
+        address.style.fontName=branding.HEADING;address.style.textColor=GOLD
+        address=Paragraph(address.text.replace(branding.LINK,branding.GOLD),address.style)
+        price_title.style.textColor=GOLD;price_text.style.textColor=PAPER
+        price_title=Paragraph(price_title.text,price_title.style)
+        price_text=Paragraph(price_text.text,price_text.style)
+        photograph=Photograph(folder/cover['filename'] if cover else None,W,519)
+        story=[Cover(prepared,address,Stack([price_title,price_text]),photograph),Columns(left,right)]
         if cover:story.append(L.paragraph(cover.get('caption','')+' | '+cover.get('source',''),8))
-        for title,detail in [('Location and nearby amenities',loc),('Size and accommodation',details),('Price and basis',price+' — '+price_basis+'. [inputs, model]')]:
-            story.append(table([[title],[detail]],[W],size=10,padding=7))
         return story
     add(1,'Property screening','',introduction)
 
     def returns():
-        story=[overview_table(),L.heading(m['verdict']),L.prose(n['summary']),
+        story=[overview_table(),L.paragraph(m['verdict'],17,'heading',True),L.prose(n['summary']),
                L.paragraph('Figures depend on the stated rent, costs and borrowing. Review purchase guidance, comparison evidence and itemised costs before deciding. Income and disposal taxes are excluded unless explicitly budgeted. [model, assumptions]',8.5),
-               *([yield_chart([v['gross_yield_pct'],v['net_yield_on_cost_pct'],v['cash_on_cash_pct']],90)] if all(v[k] is not None for k in ('gross_yield_pct','net_yield_on_cost_pct','cash_on_cash_pct')) else []),
                table([['Measure','Result and calculation'],['Gross rental yield',pct(v['gross_yield_pct'])+' — scheduled rent / purchase price'],
                       ['Net yield on cost',pct(v['net_yield_on_cost_pct'])+' — net operating income / acquisition cost'],
                       ['Cash-on-cash return',pct(v['cash_on_cash_pct'])+' — cash after debt / initial cash'],
@@ -231,7 +284,10 @@ def render_report(record,path,folder,editor,final,cashflow):
                    [str(h['years'])+' years',gbp(h.get('exit',{}).get('sale_price')),gbp(h.get('exit',{}).get('sale_proceeds')),pct(h.get('exit',{}).get('annual_irr_pct'))] for h in m['horizons']], [70,145,145,W-360]),
                L.paragraph('Starting value: '+gbp(m['starting_value'])+'. '+m['value_basis']+'. Sale proceeds deduct debt, selling fees and any supplied disposal-tax budget. [model]',8.5),
                L.paragraph('Works value change: '+gbp(m['refurbishment_value']['uplift'])+'. '+m['refurbishment_value']['basis'].rstrip('.')+'. Separate from annual market growth. ['+', '.join(m['refurbishment_value']['source_ids'])+']',8.5)]
-        return story
+        chart=L.chart('yields','Rental returns · three different measures',['Gross yield','Net yield on cost','Cash-on-cash'],
+                      [v['gross_yield_pct'],v['net_yield_on_cost_pct'],v['cash_on_cash_pct']],140,
+                      'Percentages use the distinct calculation bases in the table below.','percent')
+        return ([chart] if chart else [])+[Columns([story[0]],Stack(story[1:4],colors.HexColor(branding.TINT),9),ratio=.48)]+story[4:]
     add(2,'Returns and growth','Rental yield, capital growth and total investment return are different measures.',returns)
 
     def purchase():
@@ -257,7 +313,13 @@ def render_report(record,path,folder,editor,final,cashflow):
             if no_refurbishment and key in ('refurbishment','contingency_pct'):continue
             basis_rows.append([label,(pct(a[key]) if key.endswith('_pct') else gbp(a[key]))+' — '+m['modelling_basis'][key]])
         story.append(table(basis_rows,[150,W-150],size=8,padding=2))
-        return story
+        cost_chart=L.chart('stacked','Purchase cost composition · '+gbp(v['total_property_cost']),
+                           [{'purchase price':'Purchase','stamp duty':'Stamp duty','legal fees':'Legal','survey fees':'Survey',
+                             'upfront safety provision':'Safety','other purchase fees':'Other fees',
+                             'refurbishment including contingency':'Works'}.get(label,label) for value,label in purchase_parts],
+                           [value for value,label in purchase_parts],102,
+                           'Purchase price, tax and fees; the cash reserve is separate.')
+        return [Columns([story[0]],story[1:4],ratio=.51)]+([cost_chart] if cost_chart else [])+story[4:]
     add(3,'Purchase costs and bidding','Market evidence and the price needed to meet financial targets are separate.',purchase)
 
     def cash():
@@ -265,7 +327,23 @@ def render_report(record,path,folder,editor,final,cashflow):
             return [L.heading('Financial assessment incomplete'),L.paragraph('Unavailable inputs: '+', '.join(m.get('missing',[]))+'. Known facts and independent calculations are retained. Dependent projections are unavailable.'),
                     table([['Known cash-flow input','Amount'],['Monthly rent',gbp(v['monthly_rent'])],['Stabilised operating income / year',gbp(v['stabilised_noi'])],['Monthly debt payment',gbp(v['monthly_debt_payment'])],['Monthly cash before tax',gbp(v['monthly_cashflow_before_tax'])]])]
         annual=next((h['annual'] for h in m['horizons'] if h['available'] and h['years']==10),m['annual'])
-        story=[Image(io.BytesIO(cashflow.read_bytes()),width=W,height=W*1040/1900),Spacer(1,8),
+        keys=['scheduled_rent','lost_rent','operating_costs','debt_payment','cashflow_before_tax','tax_budget','cashflow']
+        monthly_rows=[['Month','Rent due','Rent lost','Running costs','Mortgage','Before tax','Tax budget','Cash left*']]
+        for i,row in enumerate(m['monthly'][:12],1):
+            monthly_rows.append([str(i)]+['—' if key=='tax_budget' and a['annual_tax_budget'] is None else '{:,.0f}'.format(row[key]) for key in keys])
+        monthly_rows.append(['Total']+['—' if key=='tax_budget' and a['annual_tax_budget'] is None else '{:,.0f}'.format(sum(row[key] for row in m['monthly'][:12])) for key in keys])
+        foot='*Income tax not modelled (—); cash left is BEFORE income tax.' if a['annual_tax_budget'] is None else '*Cash left deducts the supplied tax budget; it is not a tax assessment.'
+        annual_chart=L.chart('cash',str(len(annual)).capitalize()+'-year annual cash-flow scenario' if len(annual)!=10 else 'Ten-year annual cash-flow scenario',
+                             [str(row['year']) for row in annual],[row['cashflow_before_tax'] for row in annual],144,
+                             'Before income tax; modelled figures, not a forecast.')
+        label='DEMO / FICTIONAL' if record['mode']=='demo' else 'Reviewed' if record.get('approval') else 'DRAFT'
+        monthly_heading=Columns([L.heading('First-year cash flow | GBP')],
+                                [L.paragraph(label+' | revision '+str(record['revision'])+' | '+p['postcode'],7,kind=None,space=0)],ratio=.66)
+        monthly_heading.spaceAfter=0
+        story=([annual_chart] if annual_chart else [])+[monthly_heading,
+               table(monthly_rows,[40,65,60,82,70,70,68,70],size=7.5,padding=1.4),
+               L.paragraph(foot,7.8,kind=None,space=3),
+               L.paragraph('Amounts rounded for display. Initial acquisition cash is shown separately. Full precision is in the CSV / JSON.',7.5,kind=None,space=5),
                table([['Year','Rent received','Running costs','Debt service','Cash before tax','Projected equity']]+[[r['year'],gbp(r['collected_rent']),gbp(r['operating_costs']),gbp(r['interest']+r['principal']),gbp(r['cashflow_before_tax']),gbp(r['property_value']-r['loan_balance'])] for r in annual], [30,91,91,91,91,W-394],padding=3),
                L.paragraph('Projected equity is the year-end property value less the outstanding mortgage, before selling costs and tax. Property growth is a scenario; equity is not rental cash flow. [model, assumptions]',8.5),
                L.paragraph('Base vacancy: '+pct(a['void_pct'])+' plus '+str(a['initial_void_months'])+' initial empty months. The CSV contains full monthly schedules for each ownership period; income tax is excluded unless a budget was supplied. [assumptions, model]',8.5)]
@@ -292,13 +370,17 @@ def render_report(record,path,folder,editor,final,cashflow):
         story=[table(rows,[197,85,60,60,W-402]),L.prose(n['stress_conclusion'])]
         if v['loan']:
             coverage=m['interest_coverage']
-            story += [L.heading('Interest-rate comparisons'),table([['Rate','Mortgage / month','Cash before tax / month']]+[[pct(s['rate_pct']),gbp(s['monthly_payment']),gbp(s['monthly_cashflow'])] for s in m['rate_comparisons']],[80,180,W-260]),
+            story += [L.heading('Interest-rate comparisons'),table([['Rate','Mortgage / month','Cash before tax / month']]+[[pct(s['rate_pct']),gbp(s['monthly_payment']),gbp(s['monthly_cashflow'])] for s in m['rate_comparisons']],[110,190,238],size=7.8),
                       L.paragraph('Interest coverage: '+pct(coverage['base_pct'])+' initially; '+pct(coverage['stress_pct'])+' at '+pct(coverage['stress_rate_pct'])+'. Scheduled annual rent / annual interest. Lender-specific criteria require a broker check. [model, lender-icr]',8.5)]
         rows=[['Ownership','Rent collected','Rental cash','Total profit']]
         for h in m['horizons']:
             rows.append([str(h['years'])+' years',gbp(h.get('rental_income')),gbp(h.get('rental_cashflow')),gbp(h.get('exit',{}).get('total_profit'))])
-        story += [L.heading('Ownership comparison'),table(rows,[80,140,140,W-360]),L.paragraph('Profit includes rental cash and net sale proceeds after recovering initial investment. Unbudgeted income/disposal taxes are excluded. Interest-only periods beyond the loan term require known refinancing terms. [model]',8.5)]
-        return story
+        story += [L.heading('Ownership comparison'),table(rows,[120,140,140,138],size=7.5),L.paragraph('Profit includes rental cash and net sale proceeds after recovering initial investment. Unbudgeted income/disposal taxes are excluded. Interest-only periods beyond the loan term require known refinancing terms. [model]',8.5)]
+        chart=L.chart('horizontal','Monthly cash before income tax · downside scenarios',
+                      [s['name'] for s in m['scenarios']],[s['monthly_cashflow'] for s in m['scenarios']],168,
+                      'Each bar runs from its scenario value to zero.')
+        comparisons=Columns(story[2:5],story[5:],ratio=.45) if v['loan'] else Stack(story[2:])
+        return ([chart] if chart else [])+story[:2]+[comparisons]
     add(5,'Downside tests and ownership','Changes are quantified; these are scenarios rather than lender offers or forecasts.',stress)
 
     def property_page():
@@ -319,6 +401,7 @@ def render_report(record,path,folder,editor,final,cashflow):
         room_note='A total cannot identify the extra room without a floorplan.' if not room_layout else 'The sourced room layout is described below.'
         story=[table(rows,[167,W-167],padding=3),L.paragraph('The profile reports '+str(b.get('habitable_rooms') or 'unknown')+' habitable rooms. This can include living/dining/study rooms as well as bedrooms; it excludes bathrooms and circulation space. '+room_note+' [property, room-definition]',8.5)]
         if room_layout:story.append(L.paragraph(room_layout['text']+' ['+', '.join(room_layout['source_ids'])+']',8.5))
+        notes_count=len(story)
         if gallery or not final:
             photos=list(gallery) if final else list(gallery)+[None]*(10-len(gallery))
             columns=5;cell=W/columns;grid=[]
@@ -334,19 +417,22 @@ def render_report(record,path,folder,editor,final,cashflow):
                 credits=list(dict.fromkeys(photo.get('source') or 'Uploaded by analyst' for photo in gallery))
                 story.append(L.paragraph('Photo sources: '+'; '.join(credits)+'.',8))
         if p.get('listing_url'):story.append(L.linked('Open the supplied property listing',p['listing_url']))
-        return story
+        return [Columns([story[0]],Stack(story[1:notes_count],colors.HexColor(branding.TINT),9),ratio=.6)]+story[notes_count:]
     add(6,'Property facts and checks','Provider observations require a matched address; unresolved checks remain explicit.',property_page)
 
     def market():
         history=property_history(record)
         rows=[['Subject sale date','Recorded price','Source']]+[[r['date'],gbp(r['amount']),L.linked('Recorded transaction',r.get('source_url'))] for r in history[:5]]
-        story=[L.heading('This property’s sale history'),table(rows,[110,125,W-235]) if history else L.paragraph('No exact-match sale history established.')]
-        if m['local_growth']:story += [line_chart([dict(r,index=r['value']) for r in m['local_growth']],'Local historical prices (GBP)',105),Spacer(1,5)]
+        story=[L.heading('This property’s sale history'),table(rows,[145,155,238]) if history else L.paragraph('No exact-match sale history established.')]
+        history_story=list(story)
         indicators=[]
         for key,label in [('sales_demand','Sales'),('rental_demand','Rentals')]:
             d=m['market_context'][key];indicators.append(label+': '+str(d['rating'] or 'unavailable')+'; '+'; '.join(x['label']+': '+str(x['value']) for x in d['metrics']))
-        story.append(L.paragraph('Nearby activity around '+p['postcode']+': '+' | '.join(indicators)+'. These describe the area, not this property’s letting time or vacancy. [demand, demand-rent]',8.5))
-        rows=comparison_summary(record['inputs'],e,'asking')['candidates']
+        activity=L.paragraph('Nearby activity around '+p['postcode']+': '+' | '.join(indicators)+'. These describe the area, not this property’s letting time or vacancy. [demand, demand-rent]',8.5)
+        chart=L.chart('line','Local historical prices (GBP)',[row['month'] for row in m['local_growth']],
+                      [row['value'] for row in m['local_growth']],178,'Area prices; not a valuation of this property.')
+        story=([chart] if chart else [])+[Columns(history_story,[activity],ratio=.47)]
+        rows=comparison_summary(record['inputs'],e,'asking',L.today)['candidates']
         story += [L.heading('Top five asking-price comparisons'),L.comparisons(rows,'asking') if rows else L.paragraph('Provider and web research did not establish usable asking-price candidates.'),
                   L.paragraph('Showing '+str(min(5,len(rows)))+' of '+str(len(rows))+' candidates. Asking prices are not achieved sales. “Match gaps” identify incompatible or unverified facts; unknowns are shown as —. Address links open Google Maps; numbered sources retain the original evidence. Street-only adverts have no verified house identity.',8.5)]
         planning=m['property_context']['planning']
@@ -365,7 +451,16 @@ def render_report(record,path,folder,editor,final,cashflow):
                L.paragraph('Matched rental evidence: '+str(rent['count'])+' properties; supported range '+span(rent['range'])+'. Advertised rents are not achieved rents; per-room/HMO terms require confirmation.',8.5),
                *([] if investigative(n['rent_conclusion']) else [L.prose(n['rent_conclusion'])]),L.heading('Top five completed sales — last 18 months'),
                L.comparisons(sold['candidates'],'sold') if sold['candidates'] else L.paragraph('No usable completed-sale candidates established.'),
-               L.paragraph('Sale window '+months_ago(18).isoformat()+'–'+now()[:10]+'. Matched sales: '+str(sold['count'])+'; supported range '+span(sold['range'])+'. A range requires at least three dated, compatible properties. “Match gaps” are differences or unknowns, not approved adjustments.',8.5)]
+               L.paragraph('Sale window '+months_ago(18,L.today).isoformat()+'–'+L.as_of[:10]+'. Matched sales: '+str(sold['count'])+'; supported range '+span(sold['range'])+'. A range requires at least three dated, compatible properties. “Match gaps” are differences or unknowns, not approved adjustments.',8.5)]
+        charts=[]
+        for data,title in [(rent,'Advertised rents / month'),(sold,'Completed-sale prices')]:
+            candidates=data['candidates'][:5]
+            chart=L.chart('evidence',title,[gbp(row['amount']).replace('.00','') for row in candidates],
+                          [row['amount'] for row in candidates],98,'Same order as the evidence rows.')
+            if chart:charts.append(chart)
+        if charts:
+            index=4+int(not investigative(n['rent_conclusion']))
+            story.insert(index,Columns([charts[0]],[charts[1]]) if len(charts)==2 else charts[0])
         return story
     add(8,'Rental and completed-sale evidence','Up to five candidates per category; sources are linked and unknown facts are retained.',comparisons)
 
@@ -373,13 +468,22 @@ def render_report(record,path,folder,editor,final,cashflow):
         story=[table([['Financial test','Target','Result','Assessment']]+[[t['label'],pct(t['target']) if t['unit']=='%' else gbp(t['target']),pct(t['actual']) if t['unit']=='%' else gbp(t['actual']),'Unavailable' if t['passes'] is None else 'PASS' if t['passes'] else 'FAIL'] for t in m['tests']],[220,95,95,W-410]),
                L.paragraph('Target sources — net yield: '+m['purchase_guidance']['target_basis']['min_net_yield_pct']+'; monthly cash flow: '+m['purchase_guidance']['target_basis']['min_monthly_cashflow']+'. These are configured screening targets, not a universal standard.',8.5),L.heading('Base-case observations')]
         story += [L.prose(item) for item in n['strengths'] if not investigative(item)]
+        risk_start=len(story)
         story += [L.heading('Risks and qualifications')]+[L.prose(item) for item in n['risks']]
         funding=m['funding']
-        story += [L.heading('Funding information'),table([['Cash required / cash available',gbp(funding['cash_required'])+' / '+gbp(funding['cash_available'])],['Initial funding shortfall',gbp(funding.get('initial_shortfall'))],['Projected additional funding / total shortfall',gbp(funding['additional_cash_needed'])+' / '+gbp(funding['shortfall'])]],padding=3),
+        funding_start=len(story)
+        story += [L.heading('Funding information'),table([['Cash required / cash available',gbp(funding['cash_required'])+' / '+gbp(funding['cash_available'])],['Initial funding shortfall',gbp(funding.get('initial_shortfall'))],['Projected additional funding / total shortfall',gbp(funding['additional_cash_needed'])+' / '+gbp(funding['shortfall'])]],widths=[205,333],size=8,padding=3),
                   L.paragraph('Funding is separate from the yield and cash-flow tests. Unknown charges are excluded; returns remain conditional on the supplied rent, property facts and cost allowances. [model, assumptions]',8.5),
                   L.paragraph(m['price_growth_basis']+'. '+m['rent_growth_basis']+'. Growth is a scenario, not a forecast.',8.5),L.prose(n['growth_conclusion'])]
         if not m['available']:story.append(L.paragraph('Dependent figures are unavailable: '+', '.join(m['missing'])+'.'))
-        return story
+        # Both narratives retain their original page and all of their citations.
+        chart=L.chart('stacked',str(a['holding_years'])+'-year funding shortfall · '+gbp(funding['shortfall']),
+                      ['Initial shortfall','Additional funding'],
+                      [funding.get('initial_shortfall'),max(0,funding['shortfall']-funding.get('initial_shortfall',0))]
+                      if funding['shortfall'] is not None and funding.get('initial_shortfall') is not None else [],
+                      108,'Initial gap plus projected unfunded cash needs beyond the reserve.')
+        left=story[2:risk_start]+story[funding_start:funding_start+3]+([chart] if chart else [])
+        return story[:2]+[Columns(left,story[risk_start:funding_start],ratio=.43)]+story[funding_start+3:]
     add(9,'Investment conclusion','AI reasoning from the supplied figures and cited evidence; material uncertainty is preserved.',conclusion)
 
     def costs():
@@ -411,9 +515,17 @@ def render_report(record,path,folder,editor,final,cashflow):
         story.append(table(defaults_rows,[125,W-125],size=8,padding=2))
         from .tax_notes import tax_explanation
         story += [L.heading('Tax — '+a['buyer_type'].capitalize()+' ownership'),L.paragraph(tax_explanation(a),8.2)]
-        story.append(L.paragraph('Sources and Internal review are supplied separately. Full research and calculations remain in JSON. Contains HM Land Registry data © Crown copyright and database right '+now()[:4]+' under the Open Government Licence v3.0.',8))
-        return story
+        story.append(L.paragraph('Sources and Internal review are supplied separately. Full research and calculations remain in JSON. Contains HM Land Registry data © Crown copyright and database right '+L.as_of[:4]+' under the Open Government Licence v3.0.',8))
+        labels={'management_pct':'Management','maintenance_pct':'Maintenance','insurance':'Insurance','compliance':'Safety',
+                'letting_fees':'Letting / renewal','void_cost_monthly':'Empty-period bills','regular_cleaning':'Regular cleaning',
+                'turnover_cleaning':'Tenancy cleaning','service_charge':'Service charge','ground_rent':'Ground rent',
+                'other_annual_costs':'Other costs'}
+        known=[cost for cost in m['operating_costs'] if cost['annual'] is not None and cost['annual']>0]
+        chart=L.chart('costs','Known annual running-cost budgets',[labels[cost['key']] for cost in known],
+                      [cost['annual'] for cost in known],115,'Bars start at zero. Unknown budgets are excluded; £0 major works is only the stated allowance.')
+        return ([chart] if chart else [])+story[:2]+[Columns(story[2:4],story[4:],ratio=.52)]
     add(10,'Running costs and assumptions','Stabilised first-year costs; financing, purchase costs and income tax are separate.',costs)
+    L.density=1
     order=record.get('presentation',{}).get('page_order',list(range(1,11)))
     order=[1]+[number for number in order if number!=1]
     return L.render([next(page for page in pages if page[0]==number) for number in order],path,final)

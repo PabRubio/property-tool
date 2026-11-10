@@ -113,6 +113,18 @@ Investigative bedroom discrepancies, weak price evidence, incomplete cost resear
 
 The separate Sources & Evidence PDF is a compact, two-column list of references cited in the report, deduplicated by URL and linked through numbered citations. It excludes research transcripts, excerpts and verbose failure logs; those remain intact in the saved record / JSON export. Both companions are measured to remain exactly one page. An oversized reference list or internal note produces a clear editing error instead of spilling onto extra pages. All artifacts are built in a staging directory and published under fresh filenames only after all three PDFs succeed. Failed edits and regenerations retain the previous record and exports. Excessive report text causes a clear editing error before publishing the PDF; it is never silently cut or pushed onto extra pages. AI writing has explicit word budgets. The full comparison list remains in the saved record and the full monthly schedule is exported as CSV. Both spreadsheet images remain downloadable as PNGs. Fictional records retain their demo watermark after approval.
 
+## Signature Edition reports
+
+New main reports use the approved Signature Edition: ten cream A4 pages, a compact green masthead, Inter page titles, Cormorant section headings, a split cover with a large property photograph, and vector charts drawn from the report's saved calculations. The monthly cash-flow table is selectable PDF text. Missing values stay explicitly unavailable. Layout checks reject overflowing text rather than clipping content or adding pages. Existing text/style overrides, source links and draft/final photograph rules remain supported.
+
+To restyle current saved reports without refreshing research or recalculating their figures, stop any active generation jobs and run:
+
+```bash
+python3 -m screening.restyle_reports --root data/records
+```
+
+The command creates a new main PDF, updates the current download and saves the previous record under `history/before-signature-*.json`. It preserves the revision, approval, assessment date, inputs, evidence, analysis, narrative, companion PDFs and CSV/PNG exports. Previous PDFs remain available in the record folder; rerunning the command skips reports already using this layout. Records without generated reports are left alone. Reports using an incompatible older financial model must be regenerated through the normal workflow instead.
+
 ## Evidence and calculations
 
 New property briefs require the property address, postcode, type and bedroom count, alongside contact details and essential buyer/financing information. Floor area, construction age, condition, bathrooms, outdoor space and parking are recommended but can be unknown. Automated valuations require those details to be available by the time research runs; missing details do not prevent saving the brief. Studios and converted flats use the flat model; bungalows use their detached/semi-detached/terraced attachment. The report flags these broader categories. New-build and confirmed tenure information filter the recorded-sale requests. The property profile runs first and can fill missing size, age, EPC and tenure only when the identity matches; the floor-area lookup can also fill remaining gaps when it finds an unambiguous match. These lookups are not guaranteed to find every field and never overwrite client-supplied facts. House aliases and town formatting differences are accepted only with matching postcode, numbered street and no ambiguous flat/unit identifiers.

@@ -122,7 +122,9 @@ class ReportUpdates(unittest.TestCase):
             self.assertIn('Property screening',main[0]);self.assertNotIn('Property introduction',main[0])
             self.assertEqual(main[0].count(r['inputs']['property']['address']),1)
             # Material cost qualifications remain visible even when they contain staff actions.
-            self.assertIn(investigation,' '.join(main[8].split()))
+            # Raw reading order keeps a paragraph intact across a two-column layout.
+            conclusion=subprocess.check_output(['pdftotext','-raw','-f','9','-l','9',str(Path(folder)/a['pdf']),'-'],text=True)
+            self.assertIn(investigation,' '.join(conclusion.split()))
             internal=subprocess.check_output(['pdftotext',str(Path(folder)/a['internal_review_pdf']),'-'],text=True)
             self.assertIn(investigation,' '.join(internal.split()))
             for key,count in [('pdf',10),('sources_pdf',1),('internal_review_pdf',1)]:self.assertEqual(pages(Path(folder)/a[key]),count)
