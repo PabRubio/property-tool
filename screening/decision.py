@@ -1,22 +1,32 @@
 """Auditable decision inputs for the writer. AI explains these, not calculates them."""
 from .finance import stamp_duty, project, money
 from .costs import maintenance_monthly
+from .commercial import purchase_vat, missing_terms
 
 
 def operating_costs(inputs, model):
     a = model['effective_assumptions']; rent = model['metrics']['monthly_rent']
     provenance = inputs.get('input_provenance', {})
+    commercial = a.get('_asset_class') == 'commercial'
+    baseline = None
+    if commercial and rent is not None and not missing_terms(inputs, a) and 'maintenance_value' not in model.get('missing', []):
+        baseline, _, _ = project(dict(a, financing='cash', holding_years=1, initial_void_months=0),
+                                  model['metrics'].get('purchase_price') or 0, rent)
+    def scheduled_total(key):
+        return sum(row[key] for row in baseline) if baseline is not None else None
     rows = []
     def add(key, label, annual, includes):
-        supplied = a.get(key) is not None and annual is not None
+        supplied = a.get(key) is not None and annual is not None and key not in a.get('_unpriced_commercial_costs', [])
         rows.append({'key': key, 'label': label, 'annual': money(annual) if supplied else None,
                      'monthly': money(annual/12) if supplied else None, 'includes': includes,
                      'basis': model.get('modelling_basis',{}).get(key, provenance.get('assumptions.'+key, {}).get('basis', 'Unconfirmed modelling budget')) if supplied else 'Unknown; excluded, not assumed free',
                      'source_ids': a.get('_cost_source_ids',{}).get(key,['assumptions'])})
-    add('management_pct', 'Letting management', rent*12*(1-a['void_pct']/100)*a['management_pct']/100 if rent is not None else None, '%s%% of collected rent, incl. VAT; routine management, excluding tenant-find/renewal charges.' % a['management_pct'])
+    management = scheduled_total('management') if commercial else rent*12*(1-a['void_pct']/100)*a['management_pct']/100 if rent is not None else None
+    add('management_pct', 'Letting management', management, '%s%% of collected rent, incl. VAT; routine management, excluding tenant-find/renewal charges.' % a['management_pct'])
     maintenance=maintenance_monthly(a,rent)
     unit='initial property value' if a.get('maintenance_basis')=='value' else 'scheduled annual rent'
-    add('maintenance_pct', 'Repairs and maintenance', maintenance*12 if maintenance is not None else None, '%s%% of %s for routine repairs/replacements. Excludes cleaning, refurbishment and separately budgeted major works.' % (a['maintenance_pct'],unit))
+    maintenance_annual = scheduled_total('maintenance') if commercial else maintenance*12 if maintenance is not None else None
+    add('maintenance_pct', 'Repairs and maintenance', maintenance_annual, '%s%% of %s for routine repairs/replacements. Excludes cleaning, refurbishment and separately budgeted major works.' % (a['maintenance_pct'],unit))
     for key, label, description in [
         ('regular_cleaning', 'Regular cleaning', 'Landlord-paid recurring cleaning, e.g. shared areas. Confirm frequency, areas, VAT and who pays; no automatic tenant cleaning charge.'),
         ('turnover_cleaning', 'Cleaning between tenancies', 'Annual landlord-paid changeover cleaning budget; confirm cost per clean and expected tenancy changes. Excludes routine cleaning.'),
@@ -27,7 +37,13 @@ def operating_costs(inputs, model):
         ('letting_fees', 'Letting / renewal fees', 'Landlord-paid tenant finding or renewals; separate from recurring management.'),
         ('other_annual_costs', 'Other costs / major works', 'Only the stated budget; no survey-based major works forecast is implied.')]:
         add(key, label, a.get(key) or 0, description)
-    add('void_cost_monthly', 'Empty-period bills', a['void_cost_monthly']*12*a['void_pct']/100, '£%s per fully empty month, weighted by %s%% ongoing vacancy. Council tax/utilities; lost rent is separate. Initial empty months affect the first-year schedule.' % (a['void_cost_monthly'], a['void_pct']))
+    bills = 'Landlord utilities/security; business rates are separate.' if commercial else 'Council tax/utilities; lost rent is separate.'
+    empty_bills = scheduled_total('void_costs') if commercial else a['void_cost_monthly']*12*a['void_pct']/100
+    add('void_cost_monthly', 'Empty-period bills', empty_bills, '£%s per fully empty month. %s Lease events and the ongoing vacancy allowance apply; initial vacancy is excluded from the baseline.' % (a['void_cost_monthly'], bills) if commercial else '£%s per fully empty month, weighted by %s%% ongoing vacancy. %s Initial empty months affect the first-year schedule.' % (a['void_cost_monthly'], a['void_pct'], bills))
+    if commercial:
+        annual = scheduled_total('business_rates')
+        add('business_rates_annual', 'Empty-property business rates', annual,
+            'Supplied annual liability while empty; only the explicitly confirmed relief period is applied. No automatic relief eligibility.')
     return rows
 
 
@@ -37,10 +53,12 @@ def purchase_guidance(inputs, model):
     fixed_loan = a.get('mortgage_amount') if a['financing'] != 'cash' else None
     budget = inputs['investor'].get('cash_budget')
     def at(price):
-        cost = price + stamp_duty(price, a)['total'] + a['legal_fees'] + a['survey_fees'] + a['other_purchase_costs'] + a.get('safety_upfront',0) + model['metrics']['refurbishment_with_contingency']
+        vat = purchase_vat(price, a)
+        recovery = vat * a.get('purchase_vat_recoverable_pct', 0) / 100
+        cost = price + stamp_duty(price, a)['total'] + a['legal_fees'] + a['survey_fees'] + a['other_purchase_costs'] + a.get('safety_upfront',0) + model['metrics']['refurbishment_with_contingency'] + vat - recovery
         stable, loan, _ = project(dict(a, holding_years=1, initial_void_months=0), price, rent)
         monthly = sum(r['cashflow_before_tax'] for r in stable)/12
-        cash = cost - loan + a['mortgage_fees'] + a['cash_reserve']
+        cash = cost + recovery - loan + a['mortgage_fees'] + a['cash_reserve']
         rows, _, _ = project(a, price, rent)
         funding = max(0, -min(0, min(r['cumulative_cashflow'] for r in rows))-a['cash_reserve'])
         return {'yield': sum(r['net_operating_income'] for r in stable)/cost*100, 'cashflow': monthly, 'cash': cash+funding}

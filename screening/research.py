@@ -6,6 +6,7 @@ from urllib.parse import urlsplit
 from .providers import now
 from .evidence import matched_profile, enriched_inputs, identity_matches, address_key, property_history
 from .comparisons import comparison_summary
+from .commercial import is_commercial
 
 LABELS = {'conservation_area': 'Conservation area', 'green_belt': 'Green belt', 'aonb': 'National landscape',
           'national_park': 'National park', 'flood_risk': 'River / sea flood risk',
@@ -21,6 +22,22 @@ def gaps(record):
         part = profile.get('constraints', {}).get(field, {})
         if part.get('data_status') != 'found' or part.get(field) is None:
             result.append({'id': 'constraint.'+field, 'label': label, 'group': 'property', 'provider_result': 'No conclusive matched property observation'})
+    if is_commercial(inputs):
+        for field in ('floor_area_sqm', 'floor_area_basis', 'epc_rating', 'tenure', 'lease_years', 'use_class'):
+            if field == 'lease_years' and p['tenure'] == 'freehold': continue
+            if p.get(field) in (None, '', 'unknown'):
+                result.append({'id': 'property.' + field, 'label': 'Commercial ' + field.replace('_', ' '), 'group': 'property', 'provider_result': 'Not supplied or verified; non-domestic evidence required'})
+        for kind in ('rent', 'sold', 'asking'):
+            result.append({'id': 'comparisons.' + kind, 'label': 'Commercial ' + p['property_type'] + ' ' + kind + ' comparisons: area measurement, lease terms and VAT basis required', 'group': 'comparisons', 'provider_result': 'Commercial automated estimates are not completed transactions'})
+        result.extend([
+            {'id': 'property.business_rates', 'label': 'Subject rateable value and business-rate context; not an automatic landlord cost or relief entitlement', 'group': 'property', 'provider_result': 'Unverified'},
+            {'id': 'property.lease_terms', 'label': 'Published commercial lease, tenant covenant and repair/insurance responsibilities; private terms may remain unknown', 'group': 'property', 'provider_result': 'Actual lease requires client documents'},
+            {'id': 'property.nearby_places', 'label': 'Nearby transport, access, commercial setting and useful amenities', 'group': 'context', 'provider_result': 'Unverified'},
+            {'id': 'costs', 'label': 'Commercial letting, repair, legal and survey cost context; no residential RICS Home Survey allowances', 'group': 'context', 'provider_result': 'Supplied landlord budgets take precedence'},
+            {'id': 'planning', 'label': 'Subject planning use and relevant permissions; nearby applications do not confirm subject permission', 'group': 'property', 'provider_result': 'Unverified'},
+        ])
+        if not property_history(record): result.append({'id': 'history', 'label': 'Exact commercial subject sale history', 'group': 'property', 'provider_result': 'No verified transaction'})
+        return result
     for field in ('floor_area_sqm', 'bathrooms', 'construction_date', 'epc_rating', 'tenure', 'lease_years', 'finish_quality', 'outdoor_space', 'off_street_parking'):
         if field == 'lease_years' and p['tenure'] == 'freehold': continue
         if p.get(field) in (None, '', 'unknown'):

@@ -326,23 +326,34 @@ html.hm header{position:fixed;left:0;right:0;transform:translateY(-110%);transit
 <label>Postcode <span class="required-marker" aria-hidden="true">*</span><input name="postcode" required placeholder="M1 1AA" maxlength="10"></label>
 <label>Price status <span class="required-marker" aria-hidden="true">*</span><select name="price_status" id="price-status" required><option value="listed">Listed for sale</option><option value="under_offer">Under offer</option><option value="proposed">I have a proposed purchase price</option><option value="unknown">No price known</option></select></label>
 <label id="price-field">Listing / offer / proposed price (£) <span class="required-marker" aria-hidden="true">*</span><input name="asking_price" type="text" inputmode="decimal" data-number="money" data-min="1" data-max="100000000" required placeholder="For example, £250,000"></label>
-<label>Property type <span class="required-marker" aria-hidden="true">*</span><select name="property_type" id="property-type" required><option value="">Choose…</option><option value="flat">Flat / maisonette</option><option value="converted_flat">Converted flat</option><option value="studio">Studio</option><option value="terraced_house">Terraced house</option><option value="semi-detached_house">Semi-detached house</option><option value="detached_house">Detached house</option><option value="bungalow">Bungalow</option></select></label>
+<label>Investment type<select name="asset_class"><option value="residential">Residential</option><option value="commercial">Commercial</option></select></label>
+<label>Property type <span class="required-marker" aria-hidden="true">*</span><select name="property_type" id="property-type" required><option value="">Choose…</option><optgroup label="Residential" id="residential-types"><option value="flat">Flat / maisonette</option><option value="converted_flat">Converted flat</option><option value="studio">Studio</option><option value="terraced_house">Terraced house</option><option value="semi-detached_house">Semi-detached house</option><option value="detached_house">Detached house</option><option value="bungalow">Bungalow</option></optgroup><optgroup label="Commercial" id="commercial-types" hidden disabled><option value="retail">Retail / shop</option><option value="offices">Offices</option><option value="industrial">Industrial / warehouse</option></optgroup></select></label>
 <label id="attachment-field" hidden>Bungalow layout <span class="required-marker" aria-hidden="true">*</span><select name="building_attachment" disabled required><option value="">Choose…</option><option value="detached_house">Detached</option><option value="semi-detached_house">Semi-detached</option><option value="terraced_house">Terraced</option></select></label>
-<label>Bedrooms <span class="required-marker" aria-hidden="true">*</span><input name="bedrooms" type="number" min="0" max="20" step="1" required></label>
-<label>Bathrooms<input name="bathrooms" type="number" min="0" max="5" step="1"></label>
+<label data-residential>Bedrooms <span class="required-marker" aria-hidden="true">*</span><input name="bedrooms" type="number" min="0" max="20" step="1" required></label>
+<label data-residential>Bathrooms<input name="bathrooms" type="number" min="0" max="5" step="1"></label>
 <label>Internal floor area (m²)<input name="floor_area_sqm" type="number" min="1" max="10000" step="0.01" placeholder="Leave blank if unknown"></label>
-<label>Approximate construction age<select name="construction_date"><option value="">Not known</option><option value="pre_1914">Before 1914</option><option value="1914_2000">1914–1999</option><option value="2000_onwards">2000 onwards</option></select></label>
+<label data-residential>Approximate construction age<select name="construction_date"><option value="">Not known</option><option value="pre_1914">Before 1914</option><option value="1914_2000">1914–1999</option><option value="2000_onwards">2000 onwards</option></select></label>
 <label>Interior condition<select name="finish_quality"><option value="">Not known</option><option value="very_high">Luxury finish</option><option value="high">High standard</option><option value="average">Average / good condition</option><option value="below_average">Needs updating</option><option value="unmodernised">Needs substantial renovation</option></select></label>
-<label>Outdoor space<select name="outdoor_space"><option value="">Not known</option><option value="none">None</option><option value="balcony_terrace">Balcony / terrace</option><option value="garden">Garden</option><option value="garden_very_large">Very large garden</option></select></label>
+<label data-residential>Outdoor space<select name="outdoor_space"><option value="">Not known</option><option value="none">None</option><option value="balcony_terrace">Balcony / terrace</option><option value="garden">Garden</option><option value="garden_very_large">Very large garden</option></select></label>
 <label>Off-street parking spaces<select name="off_street_parking"><option value="">Not known</option><option value="0">None</option><option value="1">1</option><option value="2">2</option><option value="3">3 or more</option></select></label>
 <label>Ownership type<select name="tenure"><option value="unknown">Not known</option><option value="freehold">Freehold</option><option value="leasehold">Leasehold</option></select></label>
 <label class="check"><input name="new_build" type="checkbox">New build</label>
 <label class="wide">Listing URL (optional)<input name="listing_url" type="url" placeholder="https://…" maxlength="2000"></label>
+
+<fieldset id="commercial-property-fields" class="wide" hidden disabled><div class="grid">
+<label>Floor area measurement<select name="floor_area_basis"><option value="unknown">Not known</option><option value="gia">Gross internal area (GIA)</option><option value="nia">Net internal area (NIA)</option></select></label>
+<label>Occupancy<select name="occupancy"><option value="unknown">Not known</option><option value="vacant">Vacant</option><option value="let">Let</option></select></label>
+<label>Planning use class<input name="use_class" maxlength="100" placeholder="If known"></label>
+<label>Repairs responsibility<select name="repair_responsibility"><option value="unknown">Not known</option><option value="landlord">Landlord</option><option value="tenant">Tenant</option><option value="shared">Shared</option></select></label>
+<label>Insurance responsibility<select name="insurance_responsibility"><option value="unknown">Not known</option><option value="landlord">Landlord</option><option value="tenant">Tenant</option><option value="shared">Shared</option></select></label>
+<label>VAT on rent<select name="rent_vat_status"><option value="unknown">Not known</option><option value="exclusive">Rent excludes chargeable VAT</option><option value="exempt">Exempt</option></select></label>
+<label class="check wide"><input name="single_unit" type="checkbox" required><span>I confirm this is one commercial unit, with no residential or mixed use.</span></label>
+</div></fieldset>
 </div></fieldset></section>
 <fieldset id="investment-fields"><section class="panel"><h2>Purchase and financing</h2><div class="grid">
 <label>Buying as <span class="required-marker" aria-hidden="true">*</span><select name="buyer_type" required><option value="">Choose…</option><option value="individual">Individual</option><option value="company">Company</option></select></label>
-<label>Do you or any joint buyers own other residential property anywhere in the world? <span class="required-marker" aria-hidden="true">*</span><select name="additional_property" required><option value="">Choose…</option><option value="yes">Yes</option><option value="no">No</option></select></label>
-<label>Are all buyers UK resident for stamp duty purposes? <span class="required-marker" aria-hidden="true">*</span><select name="uk_resident" required><option value="">Choose…</option><option value="yes">Yes</option><option value="no">No / not all buyers</option></select></label>
+<label data-residential>Do you or any joint buyers own other residential property anywhere in the world? <span class="required-marker" aria-hidden="true">*</span><select name="additional_property" required><option value="">Choose…</option><option value="yes">Yes</option><option value="no">No</option></select></label>
+<label data-residential>Are all buyers UK resident for stamp duty purposes? <span class="required-marker" aria-hidden="true">*</span><select name="uk_resident" required><option value="">Choose…</option><option value="yes">Yes</option><option value="no">No / not all buyers</option></select></label>
 <label>Cash or mortgage <span class="required-marker" aria-hidden="true">*</span><select name="financing" id="financing" required><option value="">Choose…</option><option value="cash">Cash purchase</option><option value="mortgage">Mortgage</option></select></label>
 <label>Expected years of ownership<select name="holding_years"><option value="">Not sure — compare 3, 5 and 10 years</option><option value="3">3 years</option><option value="5">5 years</option><option value="10">10 years</option><option value="15">15+ years (model 15)</option></select></label>
 </div><fieldset id="mortgage-fields" disabled hidden><div class="grid">
@@ -364,7 +375,7 @@ html.hm header{position:fixed;left:0;right:0;transform:translateY(-110%);transit
 <label>Target monthly cash flow (£) (optional)<input name="min_monthly_cashflow" type="text" inputmode="decimal" data-number="money" data-min="-100000" data-max="1000000" placeholder="After mortgage payments, before income tax"></label>
 </div>
 <details><summary>Known costs and rental information</summary><div class="grid">
-<label>Expected monthly rent (£, if known)<input name="monthly_rent" type="text" inputmode="decimal" data-number="money" data-min="1" data-max="1000000"></label>
+<label data-residential>Expected monthly rent (£, if known)<input name="monthly_rent" type="text" inputmode="decimal" data-number="money" data-min="1" data-max="1000000"></label>
 <label>Basis of rent estimate<input name="rent_source" maxlength="1000" placeholder="For example, a letting agent's estimate"></label>
 <label>Legal purchase fees (£)<input name="legal_fees" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="1000000"></label>
 <label>Survey fees (£)<input name="survey_fees" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="100000"></label>
@@ -374,8 +385,26 @@ html.hm header{position:fixed;left:0;right:0;transform:translateY(-110%);transit
 <label>Annual ground rent (£)<input name="ground_rent" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="1000000"></label>
 <label>Annual landlord-paid regular cleaning (£)<input name="regular_cleaning" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="100000" placeholder="Leave blank if unknown"></label>
 <label>Annual cleaning between tenancies (£)<input name="turnover_cleaning" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="100000" placeholder="Leave blank if unknown"></label>
-<label>Remaining lease (years)<input name="lease_years" type="number" min="0" max="999" step="1"></label>
-</div></details></section></fieldset>
+<label>Remaining ownership lease (years)<input name="lease_years" type="number" min="0" max="999" step="1"></label>
+</div></details></section><section class="panel" id="commercial-lease-panel" hidden><h2>Commercial rent and lease</h2><fieldset id="commercial-assumptions-fields" disabled><div class="grid"><label>Annual rent (£, net of VAT)<input name="annual_rent" type="text" inputmode="decimal" data-number="money" data-min="1" data-max="12000000" placeholder="Leave blank if unknown"></label>
+<label>Initial months without rent (vacant property)<input name="initial_void_months" type="number" min="0" max="24" step="1" placeholder="Leave blank if unknown"></label>
+<label>Tenant lease months remaining, or proposed term if vacant<input name="lease_remaining_months" type="number" min="0" max="1200" step="1" placeholder="If vacant, starts after initial empty months"></label>
+<label>Earliest tenant break (month)<input name="break_month" type="number" min="0" max="1200" step="1" placeholder="Leave blank if unknown"></label>
+<label>Contractual rent review (month)<input name="rent_review_month" type="number" min="0" max="1200" step="1" placeholder="Leave blank if unknown"></label>
+<label>Annual rent after review (£)<input name="rent_review_annual_rent" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="12000000" placeholder="Leave blank if unknown"></label>
+<label>Initial rent-free months<input name="rent_free_months" type="number" min="0" max="120" step="1" value="0" placeholder="Leave blank if unknown"></label>
+<label>Months to relet after lease ends<input name="reletting_void_months" type="number" min="0" max="120" step="1" placeholder="Leave blank if unknown"></label>
+<label>Annual rent after reletting (£)<input name="reletting_annual_rent" type="text" inputmode="decimal" data-number="money" data-min="1" data-max="12000000" placeholder="Leave blank if unknown"></label>
+<label>Annual business rates while vacant (£)<input name="business_rates_annual" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="10000000" placeholder="Leave blank if unknown"></label>
+<label>Confirmed empty rates relief (months)<input name="rates_relief_months" type="number" min="0" max="120" step="1" value="0" placeholder="Leave blank if unknown"></label>
+<label>VAT charged on purchase<select name="purchase_vat_pct"><option value="">Not known</option><option value="0">0%</option><option value="20">20%</option></select></label><label>Recoverable share of purchase VAT (%)<input name="purchase_vat_recoverable_pct" type="text" inputmode="decimal" data-number="percent" data-min="0" data-max="100" value="0" placeholder="Leave blank if unknown"></label><label>Purchase VAT recovery (month)<input name="vat_recovery_month" type="number" min="1" max="360" step="1" placeholder="Leave blank if unknown"></label></div><details><summary>Other known commercial budgets</summary><div class="grid"><label>Annual landlord insurance (£)<input name="insurance" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="100000" placeholder="Leave blank if unknown"></label>
+<label>Annual safety / compliance (£)<input name="compliance" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="100000" placeholder="Leave blank if unknown"></label>
+<label>Annual letting / renewal fees (£)<input name="letting_fees" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="1000000" placeholder="Leave blank if unknown"></label>
+<label>Other annual costs / reserve (£)<input name="other_annual_costs" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="1000000" placeholder="Leave blank if unknown"></label>
+<label>Utilities / other costs per vacant month (£)<input name="void_cost_monthly" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="100000" placeholder="Leave blank if unknown"></label>
+<label>Maintenance allowance (%)<input name="maintenance_pct" type="text" inputmode="decimal" data-number="percent" data-min="0" data-max="50" placeholder="Leave blank if unknown"></label>
+<label>Adviser-confirmed purchase tax (£)<input name="sdlt_override" type="text" inputmode="decimal" data-number="money" data-min="0" data-max="10000000" placeholder="Leave blank if unknown"></label>
+</div></details></fieldset></section></fieldset>
 <section class="panel"><label>Anything else we should know? (optional)<textarea name="notes" rows="3" placeholder="Plans, concerns, or information from the agent" maxlength="8000"></textarea></label>
 <label class="check"><input name="england" type="checkbox" required><span>I confirm the property or area is in England and the enquiry concerns a long-term rental investment.</span></label>
 <label class="check"><input name="terms_accepted" type="checkbox" required><span>I agree to the <a href="#terms" target="_blank" rel="noopener">terms</a>: research and information only, not financial, tax or legal advice. <a href="#privacy" target="_blank" rel="noopener">Privacy notice</a>.</span></label>
@@ -866,6 +895,23 @@ window.__hr=function(){reserve();var e=document.getElementById("hc");if(e&&windo
     if(!Number.isFinite(value))input.setCustomValidity(input.dataset.number==='money'?'Enter an amount in pounds, such as £1,520.50.':'Enter a percentage, such as 5.5%.');
     else if(value<Number(input.dataset.min)||value>Number(input.dataset.max))input.setCustomValidity('Enter a value between '+input.dataset.min+' and '+input.dataset.max+'.');
   }
+  function validateFields(){
+    numberFields.forEach(validateNumber);
+    const f=form.elements;
+    for(const key of ['rent_review_month','reletting_void_months','purchase_vat_pct','vat_recovery_month'])f[key].setCustomValidity('');
+    if(f.area_only.checked||f.asset_class.value!=='commercial')return;
+    for(const [timing,rent,label] of [
+      ['rent_review_month','rent_review_annual_rent','Rent review'],
+      ['reletting_void_months','reletting_annual_rent','Reletting']
+    ]){
+      const hasTiming=f[timing].value.trim()!=='',hasRent=f[rent].value.trim()!=='';
+      if(hasTiming!==hasRent)f[hasTiming?rent:timing].setCustomValidity(label+' needs both timing and rent. Enter both, or leave both blank.');
+    }
+    if(parseNumber(f.purchase_vat_recoverable_pct.value,'percent')>0){
+      if(f.purchase_vat_pct.value!=='20')f.purchase_vat_pct.setCustomValidity('A recoverable share requires purchase VAT to be charged.');
+      if(f.vat_recovery_month.value.trim()==='')f.vat_recovery_month.setCustomValidity('Enter the month when purchase VAT is recovered.');
+    }
+  }
   function saveDraft(){
     if(entry.hidden)return;
     const fields={};
@@ -891,6 +937,21 @@ window.__hr=function(){reserve();var e=document.getElementById("hc");if(e&&windo
   function update(){
     const area=form.elements.area_only.checked;
     toggle('area-fields',area);toggle('property-fields',!area);toggle('investment-fields',!area);
+    const commercial=form.elements.asset_class.value==='commercial';
+    const types=commercial?['retail','offices','industrial']:['flat','converted_flat','studio','terraced_house','semi-detached_house','detached_house','bungalow'];
+    if(!types.includes(form.elements.property_type.value))form.elements.property_type.value='';
+    $('residential-types').disabled=commercial;$('residential-types').hidden=commercial;
+    $('commercial-types').disabled=!commercial;$('commercial-types').hidden=!commercial;
+    for(const label of form.querySelectorAll('[data-residential]')){
+      label.hidden=commercial;
+      for(const input of label.querySelectorAll('input,select,textarea'))input.disabled=area||commercial;
+    }
+    toggle('commercial-property-fields',!area&&commercial);
+    toggle('commercial-assumptions-fields',!area&&commercial);
+    $('commercial-lease-panel').hidden=area||!commercial;
+    const basis=form.elements.floor_area_basis;
+    const expected=form.elements.property_type.value==='offices'?'nia':'gia';
+    basis.setCustomValidity(commercial&&basis.value!=='unknown'&&basis.value!==expected?'Use NIA for offices and GIA for retail or industrial, or choose Not known.':'');
     const mortgage=!area&&form.elements.financing.value==='mortgage';
     toggle('mortgage-fields',mortgage);
     for(const [id,key,visible] of [
@@ -902,7 +963,7 @@ window.__hr=function(){reserve();var e=document.getElementById("hc");if(e&&windo
     const works=form.elements.refurb_level.value!=='none';
     $('refurb-budget-field').hidden=!works;form.elements.refurbishment.disabled=!works;
     $('after-works-field').hidden=!works;form.elements.after_works_value.disabled=!works;
-    $('refurb-finish-field').hidden=!works;form.elements.refurb_finish.disabled=!works;
+    $('refurb-finish-field').hidden=!works||commercial;form.elements.refurb_finish.disabled=!works||commercial;
     const priced=form.elements.price_status.value!=='unknown';
     $('price-field').hidden=!priced;form.elements.asking_price.disabled=!priced;
     const bungalow=form.elements.property_type.value==='bungalow';
@@ -910,7 +971,7 @@ window.__hr=function(){reserve();var e=document.getElementById("hc");if(e&&windo
     if(form.elements.property_type.value==='studio')form.elements.bedrooms.value='0';
     form.elements.bedrooms.readOnly=form.elements.property_type.value==='studio';
     if(!submitting)$('submit-brief').textContent=area?'Submit enquiry':'Submit property';
-    numberFields.forEach(validateNumber);
+    validateFields();
   }
   function resetSubmission(){
     submitting=false;$('submit-brief').disabled=false;
@@ -918,7 +979,7 @@ window.__hr=function(){reserve();var e=document.getElementById("hc");if(e&&windo
     try{sessionStorage.removeItem(pendingKey);}catch(e){/* Storage may be unavailable. */}
     update();
   }
-  form.addEventListener('input',event=>{if(event.target.matches('[data-number]'))validateNumber(event.target);saveDraft();});
+  form.addEventListener('input',()=>{validateFields();saveDraft();});
   form.addEventListener('change',()=>{update();saveDraft();});
   form.addEventListener('invalid',event=>{const details=event.target.closest('details');if(details)details.open=true;},true);
   window.addEventListener('pagehide',saveDraft);
@@ -932,11 +993,24 @@ window.__hr=function(){reserve();var e=document.getElementById("hc");if(e&&windo
     const area=checked('area_only'),followUpContact=checked('follow_up_contact');
     const out={enquiry:{kind:area?'area':'property',area:f.get('area')||'',budget:num('budget'),purpose:f.get('purpose'),terms_accepted:checked('terms_accepted'),feedback_call:followUpContact,testimonial_contact:followUpContact},investor:{name:f.get('name'),email:f.get('email'),cash_budget:num('cash_budget'),goal:f.get('goal'),notes:f.get('notes')},property:{},assumptions:{}};
     if(area)return out;
-    for(const k of ['address','postcode','property_type','listing_url','construction_date','finish_quality','outdoor_space','tenure','price_status'])out.property[k]=f.get(k);
+    for(const k of ['address','postcode','property_type','listing_url','construction_date','finish_quality','outdoor_space','tenure','price_status'])out.property[k]=f.get(k)||'';
     for(const k of ['asking_price','bedrooms','bathrooms','floor_area_sqm','off_street_parking','lease_years'])out.property[k]=num(k);
-    Object.assign(out.property,{country:'England',new_build:checked('new_build'),building_attachment:f.get('building_attachment')||''});
+    const commercial=f.get('asset_class')==='commercial';
+    Object.assign(out.property,{asset_class:commercial?'commercial':'residential',country:'England',new_build:checked('new_build'),building_attachment:f.get('building_attachment')||''});
+    if(commercial){
+      out.property.bedrooms=null;
+      Object.assign(out.property,{unit_count:1,mixed_use:false});
+      for(const key of ['floor_area_basis','occupancy','use_class','repair_responsibility','insurance_responsibility','rent_vat_status'])out.property[key]=f.get(key)||'';
+    }
     Object.assign(out.assumptions,{financing:f.get('financing')==='mortgage'?f.get('repayment_type'):f.get('financing'),buyer_type:f.get('buyer_type'),additional_property:f.get('additional_property')==='yes',nonresident:f.get('uk_resident')!=='yes',refurbishment_planned:f.get('refurb_level')!=='none',refurb_level:f.get('refurb_level'),refurb_finish:f.get('refurb_finish')||'medium',rent_source:f.get('rent_source')||''});
     for(const k of ['deposit_amount','deposit_pct','holding_years','rate_after_fix_pct','regular_cleaning','turnover_cleaning','interest_rate_pct','mortgage_term_years','refurbishment','min_net_yield_pct','min_monthly_cashflow','monthly_rent','management_pct','safety_upfront','after_works_value','legal_fees','survey_fees','service_charge','ground_rent']){if(num(k)!==null)out.assumptions[k]=num(k);}
+    if(commercial){
+      // Disabled residential tax questions must not imply a buyer surcharge.
+      delete out.assumptions.additional_property;delete out.assumptions.nonresident;
+      for(const key of ['annual_rent','initial_void_months','lease_remaining_months','break_month','rent_review_month','rent_review_annual_rent','rent_free_months','reletting_void_months','reletting_annual_rent','business_rates_annual','rates_relief_months','purchase_vat_pct','purchase_vat_recoverable_pct','vat_recovery_month','insurance','compliance','letting_fees','other_annual_costs','void_cost_monthly','maintenance_pct','sdlt_override']){
+        if(num(key)!==null)out.assumptions[key]=num(key);
+      }
+    }
     if(!out.assumptions.refurbishment_planned)out.assumptions.refurbishment=0;
     if(out.assumptions.financing!=='cash'){
       const rateType=f.get('rate_type');
@@ -948,13 +1022,13 @@ window.__hr=function(){reserve();var e=document.getElementById("hc");if(e&&windo
   }
   function briefJSON(){return JSON.stringify({schema_version:2,inputs:inputs()},null,2);}
   $('export-brief').addEventListener('click',()=>{
-    numberFields.forEach(validateNumber);
+    validateFields();
     if(!form.reportValidity())return;
     const href=URL.createObjectURL(new Blob([briefJSON()],{type:'application/json'}));
     const a=document.createElement('a');a.href=href;a.download='investor-brief.json';a.click();setTimeout(()=>URL.revokeObjectURL(href),5000);
   });
   form.addEventListener('submit',event=>{
-    event.preventDefault();numberFields.forEach(validateNumber);
+    event.preventDefault();validateFields();
     if(submitting||entry.hidden||!form.reportValidity())return;
     const error=$('brief-error');
     error.hidden=true;

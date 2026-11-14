@@ -43,6 +43,15 @@ class WebEntrypoints(unittest.TestCase):
                     self.assertEqual([link.get('href') for link in links], ['https://lacewinganalytics.co.uk/#contact'])
                     self.assertNotIn('id="brief-form"', markup)
 
+    def test_temporary_local_brief_is_retired(self):
+        with tempfile.TemporaryDirectory() as folder:
+            client = create_app(folder).test_client()
+            for route in ('/brief', '/assets/local-intake.js', '/assets/local-brief.css'):
+                with self.subTest(route=route):
+                    response = client.get(route)
+                    self.assertEqual(response.status_code, 404)
+                    response.close()
+
     def test_public_index_embeds_brief_without_local_assets(self):
         landing = (WEBSITE / 'index.html').read_text()
         embedded = Document(landing)

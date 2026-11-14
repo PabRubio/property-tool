@@ -199,6 +199,11 @@ def property_context(inputs, evidence):
     researched_council = evidence.get('researched_facts',{}).get('property.council_tax')
     if researched_council and not council.get('band'):
         facts[-1]={'label':'Council tax','value':researched_council['text'],'source_id':researched_council['source_ids'][0]}
+    commercial = inputs['property'].get('asset_class') == 'commercial'
+    if commercial:
+        rates = evidence.get('researched_facts', {}).get('property.business_rates')
+        facts = [{'label': 'Business rates', 'value': rates['text'] if rates else 'Rateable value and liability unverified',
+                  'source_id': rates['source_ids'][0] if rates else None}]
     flood = constraints.get('flood_risk', {})
     risk = flood.get('flood_risk') if flood.get('data_status') == 'found' else None
     researched_flood = evidence.get('researched_facts',{}).get('constraint.flood_risk')
@@ -247,4 +252,5 @@ def property_context(inputs, evidence):
                 item['decision'] = row['decision'].get('text') if isinstance(row.get('decision'), dict) else row.get('decision', row.get('status'))
                 planning['rows'].append(item)
     return {'facts': facts, 'flags': flags, 'planning': planning,
-            'council_tax_note': 'Council tax is a property reference. The vacancy-cost allowance covers empty-period bills; this charge is not added again to annual operating costs.'}
+            'council_tax_note': ('Business rates use the supplied empty-property budget and confirmed relief months. Rateable value alone does not establish liability or relief.' if commercial else
+                                'Council tax is a property reference. The vacancy-cost allowance covers empty-period bills; this charge is not added again to annual operating costs.')}

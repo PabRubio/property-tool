@@ -89,6 +89,10 @@ def current(inputs, evidence):
 
 def effective(inputs, evidence, a, basis, price, value):
     """Apply to the calculation copy only; preserve supplied figures and their meaning."""
+    if a.get('_asset_class') == 'commercial':
+        a['_maintenance_value'] = value if value is not None else price
+        a['_cost_source_ids'] = {}
+        return
     estimates=current(inputs,evidence);sources={}
     for kind in KINDS:
         if not defaulted(inputs,kind):continue

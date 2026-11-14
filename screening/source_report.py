@@ -6,6 +6,7 @@ from reportlab.platypus import Paragraph, Table
 from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.pagesizes import A4
 from . import branding
+from .commercial import is_commercial
 
 
 def analyst_wording(text):
@@ -19,7 +20,8 @@ def references(record, today=None):
         sources.append({'id':'postcode-location','title':'Postcodes.io — postcode location and administrative boundaries',
                         'url':'https://api.postcodes.io/postcodes/'+quote(record['inputs']['property']['postcode']),
                         'status':'Postcode area context','retrieved_at':record['evidence'].get('retrieved_at')})
-    from .tax_notes import REFERENCES, VERIFIED_ON
+    from .tax_notes import REFERENCES, VERIFIED_ON, COMMERCIAL_REFERENCES, COMMERCIAL_VERIFIED_ON
+    if is_commercial(record['inputs']): REFERENCES, VERIFIED_ON = COMMERCIAL_REFERENCES, COMMERCIAL_VERIFIED_ON
     sources.extend({'id':sid,'title':title,'url':url,'status':'Government guidance','retrieved_at':VERIFIED_ON} for sid,title,url in REFERENCES)
     from .comparisons import comparison_summary
     import hashlib
@@ -30,7 +32,7 @@ def references(record, today=None):
                 sources.append({'id':'listing-'+hashlib.sha256(url.encode()).hexdigest()[:12],
                                 'title':row['address'],'url':url,'status':'Sale' if kind=='sold' else 'Observed',
                                 'retrieved_at':row.get('date') if kind=='sold' else row.get('observed_at')})
-    sources.extend([
+    if not is_commercial(record['inputs']): sources.extend([
         {'id':'room-definition','title':'PropertyData — habitable-room definition','url':'https://propertydata.co.uk/api/documentation/property-types','status':'reference','scope':'Definition, not a room-by-room survey'},
         {'id':'lender-icr','title':'The Mortgage Works — lender-specific income and stress criteria','url':'https://www.themortgageworks.co.uk/intermediaries/lending-criteria/income','status':'reference','scope':'Illustration of lender-specific rules; not applied as automatic eligibility'}])
     rules=(record.get('analysis') or {}).get('sdlt',{}).get('rules',{})

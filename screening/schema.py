@@ -2,6 +2,7 @@ import math
 import re
 from datetime import date
 from urllib.parse import urlsplit
+from .commercial import PROPERTY_TYPES as COMMERCIAL_TYPES, is_commercial
 
 
 # Each numeric field is defined once for browser controls and server validation.
@@ -56,6 +57,23 @@ FIELDS = [
     ("cost_stress_pct", "Stress scenario: running-cost increase (%)", "Screening targets", 20, 0, 200),
 ]
 INT_FIELDS = {"mortgage_term_years", "fixed_rate_years", "initial_void_months", "holding_years"}
+FIELDS += [
+    ('annual_rent', 'Commercial annual rent excluding VAT (£)', 'Commercial lease', None, 1, 12000000),
+    ('lease_remaining_months', 'Tenant lease remaining (months)', 'Commercial lease', None, 0, 1200),
+    ('break_month', 'Earliest tenant break (months from completion)', 'Commercial lease', None, 0, 1200),
+    ('rent_review_month', 'Next rent review (months from completion)', 'Commercial lease', None, 0, 1200),
+    ('rent_review_annual_rent', 'Annual rent after review excluding VAT (£)', 'Commercial lease', None, 0, 12000000),
+    ('rent_free_months', 'Initial rent-free months', 'Commercial lease', 0, 0, 120),
+    ('reletting_void_months', 'Empty months after break / expiry', 'Commercial lease', None, 0, 120),
+    ('reletting_annual_rent', 'Annual rent on reletting excluding VAT (£)', 'Commercial lease', None, 1, 12000000),
+    ('business_rates_annual', 'Annual business rates while empty (£)', 'Commercial costs', None, 0, 10000000),
+    ('rates_relief_months', 'Confirmed empty-rates relief months', 'Commercial costs', 0, 0, 120),
+    ('purchase_vat_pct', 'VAT charged on purchase (%)', 'Commercial costs', None, 0, 20),
+    ('purchase_vat_recoverable_pct', 'Recoverable share of purchase VAT (%)', 'Commercial costs', 0, 0, 100),
+    ('vat_recovery_month', 'Purchase VAT recovery month after completion', 'Commercial costs', None, 1, 360),
+]
+INT_FIELDS.update({'lease_remaining_months', 'break_month', 'rent_review_month', 'rent_free_months',
+                   'reletting_void_months', 'rates_relief_months', 'vat_recovery_month'})
 PROPERTY_TYPES = ["flat", "converted_flat", "studio", "terraced_house", "semi-detached_house", "detached_house", "bungalow"]
 
 
@@ -73,7 +91,10 @@ def defaults():
                          "bedrooms": 2, "floor_area_sqm": None, "tenure": "unknown", "lease_years": None,
                          "epc_rating": "unknown", "cladding_status": "unknown", "listing_notes": "", "uprn": "",
                          "construction_date": "", "finish_quality": "", "outdoor_space": "", "bathrooms": None, "off_street_parking": None,
-                         "building_attachment": "", "new_build": False, "price_status": "unknown"},
+                         "building_attachment": "", "new_build": False, "price_status": "unknown",
+                         "asset_class": "residential", "floor_area_basis": "unknown", "occupancy": "unknown",
+                         "unit_count": 1, "mixed_use": False, "use_class": "",
+                         "repair_responsibility": "unknown", "insurance_responsibility": "unknown", "rent_vat_status": "unknown"},
             "assumptions": dict({f[0]: f[3] for f in FIELDS}, financing="unknown", buyer_type="individual",
                                 additional_property=True, nonresident=False, corporate_relief_confirmed=False,
                                 new_lease=False, rate_type="unknown", rent_source="", cost_source="", finance_source="", tax_source="", after_works_source="", safety_included_in="none",
@@ -165,8 +186,23 @@ def validate(payload):
     p["postcode"] = pc[:-3] + " " + pc[-3:]
     if p["country"] != "England":
         raise ValueError("V1 supports England only")
-    if p["property_type"] not in PROPERTY_TYPES or p["tenure"] not in ("freehold", "leasehold", "unknown"):
+    if p['asset_class'] not in ('residential', 'commercial'):
+        raise ValueError('Choose residential or commercial property')
+    commercial = is_commercial(out)
+    if p["property_type"] not in (COMMERCIAL_TYPES if commercial else PROPERTY_TYPES) or p["tenure"] not in ("freehold", "leasehold", "unknown"):
         raise ValueError("Invalid property type or tenure")
+    for key, choices in [('floor_area_basis', ('unknown', 'gia', 'nia')), ('occupancy', ('unknown', 'vacant', 'let')),
+                         ('repair_responsibility', ('unknown', 'landlord', 'tenant', 'shared')),
+                         ('insurance_responsibility', ('unknown', 'landlord', 'tenant', 'shared')),
+                         ('rent_vat_status', ('unknown', 'exclusive', 'exempt'))]:
+        if p[key] not in choices: raise ValueError('Invalid ' + key.replace('_', ' '))
+    p['use_class'] = string(p['use_class'], 'Planning use class', 100)
+    p['unit_count'] = number(p['unit_count'], 'Unit count', 1, 1000, False)
+    if p['unit_count'] % 1: raise ValueError('Unit count must be a whole number')
+    p['unit_count'] = int(p['unit_count'])
+    if not isinstance(p['mixed_use'], bool): raise ValueError('Mixed use must be true or false')
+    if commercial and (p['unit_count'] != 1 or p['mixed_use']):
+        raise ValueError('Commercial screening supports one retail, office or industrial unit, with no mixed use')
     if p["epc_rating"] not in list("ABCDEFG") + ["unknown"]:
         raise ValueError("Invalid EPC rating")
     if p["cladding_status"] not in ("unknown", "not_applicable", "evidence_reviewed", "concern"):
@@ -182,10 +218,13 @@ def validate(payload):
     if p['property_type'] == 'studio': p['bedrooms'] = 0
     p["floor_area_sqm"] = number(p["floor_area_sqm"], "Floor area", 1, 10000)
     p["lease_years"] = number(p["lease_years"], "Lease years", 0, 999)
-    p["bedrooms"] = number(p["bedrooms"], "Bedrooms", 0, 20, False)
-    if p["bedrooms"] % 1:
-        raise ValueError("Bedrooms must be a whole number")
-    p["bedrooms"] = int(p["bedrooms"])
+    if commercial:
+        p['bedrooms'] = None
+    else:
+        p["bedrooms"] = number(p["bedrooms"], "Bedrooms", 0, 20, False)
+        if p["bedrooms"] % 1:
+            raise ValueError("Bedrooms must be a whole number")
+        p["bedrooms"] = int(p["bedrooms"])
     for key, maximum in (("bathrooms", 5), ("off_street_parking", 3)):
         p[key] = number(p[key], key, 0, maximum)
         if p[key] is not None and p[key] % 1:
@@ -205,6 +244,19 @@ def validate(payload):
     for key in ("additional_property", "nonresident", "corporate_relief_confirmed", "new_lease", "refurbishment_planned"):
         if not isinstance(a[key], bool):
             raise ValueError(key + " must be true or false")
+    if commercial:
+        if a['annual_rent'] is not None:
+            if a['monthly_rent'] is not None and abs(a['monthly_rent'] - a['annual_rent'] / 12) > .011:
+                raise ValueError('Annual rent and monthly rent must agree')
+            a['monthly_rent'] = a['annual_rent'] / 12
+        if a['purchase_vat_pct'] not in (None, 0, 20):
+            raise ValueError('Purchase VAT must be unknown, 0% or 20%; use an adviser-confirmed transaction basis')
+        if a['purchase_vat_recoverable_pct'] and (not a['purchase_vat_pct'] or a['vat_recovery_month'] is None):
+            raise ValueError('Recoverable purchase VAT requires charged VAT and a recovery month')
+        for first, second, label in [('rent_review_month', 'rent_review_annual_rent', 'Rent review'),
+                                      ('reletting_void_months', 'reletting_annual_rent', 'Reletting')]:
+            if (a[first] is None) != (a[second] is None):
+                raise ValueError(label + ' needs both timing and rent')
     for key in ("rent_source", "cost_source", "finance_source", "tax_source", "after_works_source"):
         a[key] = string(a[key], key)
     if a['safety_included_in'] not in ('none', 'refurbishment', 'other_purchase_costs'):
@@ -240,6 +292,11 @@ def validate(payload):
                "floor_area_sqm": number(c.get("floor_area_sqm"), "Comparable floor area", 1, 10000),
                "selected": c.get("selected", False), "source": string(c.get("source", "Analyst supplied"), "Source", 200),
                "property_type": string(c.get("property_type", ""), "Comparable type", 100)}
+        if commercial:
+            row['floor_area_basis'] = string(c.get('floor_area_basis', 'unknown'), 'Comparable area basis', 20)
+            row['rental_basis'] = string(c.get('rental_basis', 'unknown'), 'Comparable rental basis', 40)
+            row['tenure'] = string(c.get('tenure', 'unknown'), 'Comparable tenure', 20)
+            row['lease_terms'] = string(c.get('lease_terms', ''), 'Comparable lease terms', 1000)
         if not row["address"] or not isinstance(row["selected"], bool):
             raise ValueError("Comparables need an address and selected true/false")
         out["comparables"].append(row)
@@ -248,6 +305,8 @@ def validate(payload):
     for key, _, _, _, _, _ in FIELDS:
         if key not in payload.get('assumptions', {}):
             out['input_provenance'].setdefault('assumptions.'+key, {'basis':'Illustrative default (unverified)'})
+    if commercial and a['annual_rent'] is not None and 'monthly_rent' not in payload.get('assumptions', {}):
+        out['input_provenance']['assumptions.monthly_rent'] = {'basis': 'Derived from supplied annual rent / 12'}
     return out
 
 
@@ -259,11 +318,11 @@ def validate_submission(payload):
         raise ValueError('Enter your name and a valid contact email')
     if not e['terms_accepted']: raise ValueError('Please accept the terms before submitting')
     if e['kind'] == 'area': return out
-    for key in ('property_type', 'bedrooms'):
+    for key in (('property_type',) if is_commercial(out) else ('property_type', 'bedrooms')):
         if key not in payload.get('property', {}): raise ValueError('Please complete the property details: ' + key.replace('_', ' '))
     if a['financing'] == 'unknown': raise ValueError('Choose cash or mortgage financing')
     supplied = payload.get('assumptions', {})
-    for key in ('buyer_type', 'additional_property', 'nonresident'):
+    for key in (('buyer_type',) if is_commercial(out) else ('buyer_type', 'additional_property', 'nonresident')):
         if key not in supplied: raise ValueError('Complete the buyer details')
     if a['financing'] != 'cash':
         if not a['mortgage_amount'] and a.get('deposit_amount') is None and a.get('deposit_pct') is None:

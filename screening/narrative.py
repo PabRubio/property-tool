@@ -4,9 +4,10 @@ import os
 import re
 import copy
 from .providers import now
-from .schema import FIELDS, defaults, validate
+from .schema import FIELDS, defaults, validate, number
 from .editor import apply_presentation, STYLE_DEFAULTS
 from .evidence import matched_profile, property_history, ranked_comparables
+from .commercial import is_commercial
 
 ITEM = {"type": "object", "properties": {"text": {"type": "string"}, "source_ids": {"type": "array", "items": {"type": "string"}}}, "required": ["text", "source_ids"], "additionalProperties": False}
 CONCLUSIONS = ('purchase_conclusion', 'rent_conclusion', 'growth_conclusion', 'stress_conclusion')
@@ -27,11 +28,26 @@ def deterministic(record, reason="AI writing was not requested"):
     checks.extend(['Confirm the exact address, asking price and current listing availability with the agent.',
                    'Review the ranked comparisons for property type, size, condition and date; obtain a local letting-agent opinion of achievable rent.',
                    'Obtain a survey and broker quote, and confirm EPC, letting requirements and purchase, income and disposal taxes.'])
+    if is_commercial(record['inputs']):
+        checks.append('Verify tenant covenant, permitted use, measured area basis, repair and insurance responsibilities, lease expiry, breaks, rent reviews and purchase VAT recovery with the lease and advisers.')
     return {"provider": "template", "model": "deterministic", "generated_at": now(), "warning": reason,
             "content": {**{key:{"text":"AI commentary has not been generated. Review the calculation tables and supporting evidence.","source_ids":["model"]} for key in CONCLUSIONS}, "summary": {"text": model["verdict"] + ". The financial results depend on the stated rent, costs and financing assumptions. Review the evidence gaps and downside scenarios before deciding whether to investigate further.", "source_ids": ["model", "assumptions"]},
                         "strengths": [{"text": t["label"] + " meets the configured target under the base assumptions.", "source_ids": ["model"]} for t in model["tests"] if t["passes"]],
                         "risks": [{"text": f["title"] + ": " + f["detail"], "source_ids": ["model"]} for f in model["flags"] if f["level"] in ("critical", "warning")][:10],
                         "due_diligence": [{"text": s, "source_ids": ["model", "inputs", "assumptions"]} for s in checks]}}
+
+
+def sync_commercial_rent(inputs, changes):
+    """An explicit edit to one rent unit supersedes its saved companion value."""
+    if not is_commercial(inputs): return
+    keys = {c['key'] for c in changes if c.get('section', 'assumptions') == 'assumptions'}
+    a = inputs['assumptions']
+    if 'annual_rent' in keys and 'monthly_rent' not in keys:
+        annual = number(a['annual_rent'], 'Annual rent')
+        a['monthly_rent'] = annual / 12 if annual is not None else None
+    elif 'monthly_rent' in keys and 'annual_rent' not in keys:
+        monthly = number(a['monthly_rent'], 'Monthly rent')
+        a['annual_rent'] = monthly * 12 if monthly is not None else None
 
 
 def choose_model(provider):
@@ -156,6 +172,10 @@ Return summary, purchase_conclusion, rent_conclusion, growth_conclusion, stress_
         system += ' The client report is exactly ten pages. Avoid repeating tables or the same warning in several sections. Aim for 60–90 words per conclusion (hard maximum 110); summary at most 90 words; at most four strengths of 45 words each, six risks of 65 words each and six next steps of 50 words each. All commentary together must be at most 1,100 words. Keep source citations and material uncertainty; full search logs belong in the saved record, not the client report.'
         system += ' A failed/unavailable source may only support a statement that its evidence was unavailable, never a positive property fact. Client facts remain explicitly supplied facts; identify discrepancies with external estimates without silently substituting those estimates.'
         system += ' Keep the same five material risk topics whether price, rent, both or neither was estimated: financing covers lender terms, debt/repayment and funding constraints; occupancy covers the assumed letting arrangement and unverified licensing/planning/permissions; cost_assumptions explains the effective management service/VAT and maintenance rent/value basis, property-specific reasoning and evidence limitations; exclusions identifies unpriced cleaning, service charges/major works and purchase/income/disposal tax treatment without duplicating separately budgeted charges; environment covers flood, listed/designation and other evidenced site risks or missing checks. Tailor each to this property: do not invent risks or treat missing evidence as a clean result. Preserve these qualifications in client risks even if staff actions also appear in due_diligence. Never replace them with a generic headline-return warning. Each risk is at most 65 words. Refer to analyst estimates, never Codex, in client text. Fees/allowances are budgets, not quotes or survey findings; explain the selected survey level and legal VAT/searches scope where relevant.'
+        if is_commercial(record['inputs']):
+            from .codex_research import COMMERCIAL_INSTRUCTIONS
+            system += '\n' + COMMERCIAL_INSTRUCTIONS
+            system += ' Interpret growth_conclusion as the commercial lease and reletting scenario: earliest break/expiry ends rent unless explicitly priced reletting is supplied; reviews are contractual steps, never annual rent inflation. Explain purchase VAT funded in full, specified recovery timing, non-residential SDLT including charged VAT, empty-property rates and unpriced landlord budgets. Use annual and monthly rent units explicitly. Do not apply residential finance-cost restrictions or dwelling taxes. Compare measured area, subtype, covenant and lease terms. Commercial quoting rents are area context; capitalised values are not completed-sale evidence.'
         for attempt in range(2):
             proposed = call_model(provider, model, system, packet, WRITER_SCHEMA)
             try:
@@ -235,13 +255,13 @@ def plan_revision(record, provider, instruction, capture_research=None):
               'current_presentation': record.get('presentation', {}),
               'numeric_field_labels': {f[0]:f[1] for f in FIELDS},
               'input_choices': {'financing': ['cash','interest_only','repayment','mortgage_unsure'], 'buyer_type':['individual','company'],
-                'property_type':['flat','converted_flat','studio','bungalow','terraced_house','semi-detached_house','detached_house'], 'tenure':['freehold','leasehold','unknown'],
+                'asset_class':['residential','commercial'], 'property_type':['flat','converted_flat','studio','bungalow','terraced_house','semi-detached_house','detached_house','retail','offices','industrial'], 'floor_area_basis':['unknown','nia','gia'], 'occupancy':['unknown','vacant','let'], 'repair_responsibility':['unknown','landlord','tenant','shared'], 'insurance_responsibility':['unknown','landlord','tenant','shared'], 'rent_vat_status':['unknown','exclusive','exempt'], 'tenure':['freehold','leasehold','unknown'],
                 'construction_date':['','pre_1914','1914_2000','2000_onwards'], 'finish_quality':['','very_high','high','average','below_average','unmodernised'],
                 'outdoor_space':['','none','balcony_terrace','garden','garden_very_large'], 'cladding_status':['unknown','not_applicable','evidence_reviewed','concern'],
                 'risk_tolerance':['low','moderate','high'], 'epc_rating':['unknown','A','B','C','D','E','F','G']}}
     packet['input_choices']['maintenance_basis']=['auto','rent','value']
     packet['research_context']=edit_research.context(record)
-    response=run(system+'\n'+edit_research.INSTRUCTIONS,packet,schema,model=model,research=True,timeout=180)
+    response=run(system+'\n'+edit_research.INSTRUCTIONS+('\n'+edit_research.COMMERCIAL_INSTRUCTIONS if is_commercial(record['inputs']) else ''),packet,schema,model=model,research=True,timeout=180)
     result=response['output']
     research_result={'output':result.get('research',{}) if isinstance(result,dict) else {},
                      'planner_output':result,'tool_calls':response['tool_calls'],'model':response['model']}
@@ -264,6 +284,7 @@ def plan_revision(record, provider, instruction, capture_research=None):
         if section == 'notes': inputs[field] = item['value']
         else: inputs[section][field] = item['value']
         changes.append({'section': section, 'key': field, 'value': item['value']})
+    sync_commercial_rent(inputs, changes)
     inputs = validate(inputs)
     if changes:
         # A separate tool-free extraction sees only the user's request and saved

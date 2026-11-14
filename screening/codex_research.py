@@ -15,9 +15,10 @@ from . import research_tasks
 from .evidence import address_key, enriched_inputs, matched_profile
 from .providers import now, scrub
 from .research import FINDING, gaps, apply_findings
+from .commercial import is_commercial
 
 
-VERSION = 5
+VERSION = 6
 FINDING_WITH_QUOTE = copy.deepcopy(FINDING)
 FINDING_WITH_QUOTE['properties']['evidence_quote'] = {'type': 'string'}
 FINDING_WITH_QUOTE['required'].append('evidence_quote')
@@ -44,6 +45,9 @@ Estimates: when a supplied purchase price or rent is missing, reason from the su
 Return concise JSON matching the schema. done means further searching is unlikely to improve the report, not that every gap was solved. Summarise remaining limitations honestly.'''
 SYSTEM += '\n'+costs.INSTRUCTIONS
 SYSTEM += '\n'+research_tasks.INSTRUCTIONS
+
+COMMERCIAL_INSTRUCTIONS = '''COMMERCIAL SCOPE OVERRIDE: This is one retail, offices or industrial rental unit in England. Residential bedroom, whole-house, residential survey and growth instructions do not apply. Use non-domestic EPC, permitted planning use, access, area measurement and actual lease terms. Offices require NIA; retail/industrial require GIA. Never silently relabel a floor area. Private tenant lease dates, breaks, rent reviews, recoverability and VAT status cannot be invented or inferred from residential defaults. No residential market prices, growth or rent inflation. Commercial automated sale estimates capitalise quoting rents with standard yields; they are not completed sales or tenant-covenant valuations.
+Commercial comparison rows add floor_area_basis (gia/nia/unknown) and lease_terms (actual quoted lease scope, or empty if unknown). Bedrooms must be null. For rents, amount is monthly GBP excluding VAT and rental_basis is commercial_unit_monthly only when the exact evidence_quote establishes the whole unit rent and VAT basis. You may divide an explicitly quoted annual total by 12; include the annual amount, per-annum unit and VAT passage in the quote. Never divide a per-square-foot rate as if it were total rent. If monthly total or VAT basis is uncertain use unknown, never guess. Sale comparisons need commercial subtype, measured area, tenure and lease context. Supplied actual lease rent takes precedence over market asking rent. Do not return residential cost estimates: cost_estimates must be []; commercial costs may be cited context only. No Home Survey level assumptions. Preserve existing evidence provenance rules.'''
 
 
 def observed_sources(calls):
@@ -126,6 +130,24 @@ def grounded(output, sources):
         amounts = re.findall(money + r'\s*' + monthly, quote, re.I)
         amounts += re.findall(r'monthly\s+(?:asking\s+)?rent\s*[:\-]?\s*' + money, quote, re.I)
         return row.get('amount') in [float(amount.replace(',', '')) for amount in amounts]
+    def monthly_commercial(row):
+        quote = str(row.get('evidence_quote', '')).replace('\\n', ' ')
+        if row.get('rental_basis') != 'commercial_unit_monthly': return False
+        if not re.search(r'(?:excl(?:uding|usive)?\.?\s*(?:of\s*)?VAT|exclusive\s+of\s+VAT|plus\s+VAT|\+\s*VAT|no\s+VAT|VAT\s+(?:is\s+)?not\s+(?:applicable|payable))', quote, re.I): return False
+        money = r'£\s*(\d[\d,]*(?:\.\d+)?)'
+        annual_unit = r'(?:p\.?a\.?\b|per\s+annum\b|per\s+year\b|/\s*year\b)'
+        monthly_unit = r'(?:pcm\b|per\s+month\b|/\s*month\b)'
+        per_area = r'(?:\bper\s*(?:square\s*(?:foot|feet|metre|meter)|sq\.?\s*(?:ft|m)|m[²2])|\bp\.?s\.?[fm]\.?\b|/\s*(?:sq\.?\s*(?:ft|m)|m[²2]|ft[²2]))'
+        amounts = []
+        for pattern, divisor in ((annual_unit, 12), (monthly_unit, 1)):
+            for match in re.finditer(money + r'\s*' + pattern, quote, re.I):
+                # Check the local price clause, stopping at the next explicit
+                # total or sentence so a separate whole-unit amount may qualify.
+                tail = re.split(r';|\n|£|(?<=[.!?])\s+(?=[A-Z])', quote[match.end():], maxsplit=1)[0]
+                if re.search(per_area, tail, re.I): continue
+                amounts.append(float(match[1].replace(',', '')) / divisor)
+        value = row.get('amount')
+        return isinstance(value, (int, float)) and not isinstance(value, bool) and any(abs(value - amount) <= .011 for amount in amounts)
     result = copy.deepcopy(output)
     for finding in result.get('findings', []):
         if not quoted(finding):
@@ -150,9 +172,10 @@ def grounded(output, sources):
                     continue
                 # The amount must occur in the actual quoted passage, not just model prose.
                 numbers = re.findall(r'\d[\d,]*(?:\.\d+)?', row['evidence_quote'])
-                if row.get('amount') not in [float(n.replace(',', '')) for n in numbers]:
+                commercial_rent = row.get('kind') == 'rent' and monthly_commercial(row)
+                if not commercial_rent and row.get('amount') not in [float(n.replace(',', '')) for n in numbers]:
                     continue
-                if row.get('kind') == 'rent' and not monthly_house(row):
+                if row.get('kind') == 'rent' and not (commercial_rent or monthly_house(row)):
                     continue
                 valid.append(row)
             finding['value_json'] = json.dumps(valid)
@@ -219,14 +242,14 @@ def research(record, progress=lambda s: None, refresh=False):
                   'priority_follow_up':copy.deepcopy(pending[0]) if pending else None,
                   'follow_up_history':copy.deepcopy([t for t in audit['follow_ups'] if t['status']!='pending']),
                   'analyst_notes': record['inputs'].get('analyst_notes', ''),
-                  'cost_context': {'requested':[k for k in costs.KINDS if costs.defaulted(record['inputs'],k)],
+                  'cost_context': {'requested':[] if is_commercial(record['inputs']) else [k for k in costs.KINDS if costs.defaulted(record['inputs'],k)],
                                    'assumptions':inputs['assumptions'], 'investor_notes':inputs['investor'].get('notes',''),
                                    'existing_estimates':costs.current(record['inputs'],e)},
                   'target_seconds_remaining': max(0, round(target - elapsed)), 'hard_seconds_remaining': round(remaining)}
         batch = {'gaps': [g['id'] for g in packet['gaps']], 'retrieved_at': now(), 'errors': []}
         audit['batches'].append(batch)
         try:
-            result = run(SYSTEM, packet, SCHEMA, model=os.getenv('CODEX_MODEL'), research=True,
+            result = run(SYSTEM + ('\n' + COMMERCIAL_INSTRUCTIONS if is_commercial(record['inputs']) else ''), packet, SCHEMA, model=os.getenv('CODEX_MODEL'), research=True,
                          timeout=min(180, remaining), progress=progress)
             calls = result['tool_calls']
             output = result['output']

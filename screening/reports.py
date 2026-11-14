@@ -15,6 +15,7 @@ from .providers import now
 from .editor import ReportEditor, FONTS
 from .evidence import ranked_comparables
 from . import branding
+from .commercial import is_commercial
 
 INK = colors.HexColor(branding.INK)
 TEAL = colors.HexColor(branding.GREEN)
@@ -60,6 +61,9 @@ def cashflow_image(record, path, editor=None):
     foot = "*Income tax not modelled (—); cash left is BEFORE income tax." if m["effective_assumptions"]["annual_tax_budget"] is None else "*Cash left deducts the supplied tax budget; it is not a tax assessment."
     d.text((35,942), foot, fill=branding.MUTED, font=font(23))
     d.text((35,981), "Amounts rounded for display. Initial acquisition cash is shown separately. Full precision is in the CSV / JSON.", fill=branding.MUTED, font=font(21))
+    if is_commercial(record['inputs']):
+        note='VAT recovery '+gbp(m['metrics'].get('recoverable_purchase_vat'))+' in month '+str(m['effective_assumptions'].get('vat_recovery_month') or 'unspecified')+' is included once in cash left; business rates are in running costs.'
+        d.text((35,1015),note,fill=branding.MUTED,font=font(17))
     im.save(str(path), "PNG")
 
 
@@ -108,8 +112,8 @@ def calculation_image(record, path, editor=None):
         ('A2', 'NET OPERATING INCOME (NOI)', 'Rent less vacancy and operating costs', gbp(v['stabilised_noi'])),
         ('A3', 'ANNUAL DEBT SERVICE', 'Monthly mortgage payment x 12', gbp(v['monthly_debt_payment'] * 12)),
         ('A4', 'CASH FLOW BEFORE INCOME TAX', 'NOI less annual debt service', gbp(v['stabilised_noi'] - v['monthly_debt_payment'] * 12)),
-        ('B1', 'TOTAL PROPERTY COST', 'Price + tax + fees + safety + refurbishment', gbp(v['total_property_cost'])),
-        ('B2', 'INITIAL CASH REQUIRED', 'Total cost - loan + finance fees + buffer', gbp(v['cash_required'])),
+        ('B1', 'TOTAL PROPERTY COST', 'Price + tax + fees + works + irrecoverable VAT' if is_commercial(record['inputs']) else 'Price + tax + fees + safety + refurbishment', gbp(v['total_property_cost'])),
+        ('B2', 'INITIAL CASH REQUIRED', 'Net project cost + recoverable VAT - loan + fees + reserve' if is_commercial(record['inputs']) else 'Total cost - loan + finance fees + buffer', gbp(v['cash_required'])),
         ('C1', 'GROSS RENTAL YIELD', 'A1 / purchase price x 100', pct(v['gross_yield_pct'])),
         ('C2', 'NET YIELD ON TOTAL COST', 'A2 / B1 x 100', pct(v['net_yield_on_cost_pct'])),
         ('C3', 'CASH-ON-CASH RETURN', 'A4 / B2 x 100', pct(v['cash_on_cash_pct'])),

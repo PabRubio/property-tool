@@ -54,7 +54,7 @@ def main():
             with patch('app.default_provider', return_value='none'):
                 app = create_app(folder / 'records')
                 client = app.test_client()
-                for name in ('property-brief', 'area-brief'):
+                for name in ('property-brief', 'area-brief', 'commercial-retail', 'commercial-offices', 'commercial-industrial'):
                     brief = json.loads((folder / (name + '.json')).read_text())
                     response = client.post('/api/records', json={'inputs': brief['inputs']},
                                            headers={'X-Local-Token': app.csrf_token})
@@ -65,9 +65,24 @@ def main():
                     if name == 'property-brief':
                         assert stored['property']['asking_price'] == 250000
                         assert stored['assumptions']['monthly_rent'] == 1500
-                    else:
+                    elif name == 'area-brief':
                         assert stored['enquiry']['area'] == 'Manchester'
-                print('PASS: emailed JSON payloads import through the dashboard API with preserved values.')
+                    else:
+                        kind = name.split('-', 1)[1]
+                        assert stored['property']['asset_class'] == 'commercial'
+                        assert stored['property']['property_type'] == kind
+                        assert stored['property']['floor_area_sqm'] == 150
+                        assert stored['property']['floor_area_basis'] == ('nia' if kind == 'offices' else 'gia')
+                        assert stored['property']['lease_years'] == 99
+                        assert stored['property']['bedrooms'] is None
+                        assert stored['assumptions']['annual_rent'] == 24000
+                        assert stored['assumptions']['monthly_rent'] == 2000
+                        assert stored['assumptions']['lease_remaining_months'] == 60
+                        assert stored['assumptions']['break_month'] == 36
+                        assert stored['assumptions']['business_rates_annual'] == 8000
+                        assert stored['assumptions']['purchase_vat_pct'] == 20
+                        assert stored['assumptions']['purchase_vat_recoverable_pct'] == 50
+                print('PASS: residential, area and all three commercial email payloads import through the dashboard API with preserved values.')
             return 0
         finally:
             try:

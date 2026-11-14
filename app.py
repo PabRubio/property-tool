@@ -19,6 +19,7 @@ from screening.narrative import generate, validate_content, allowed_sources, def
 from screening.codex import available as codex_available
 from screening.reports import generate_report
 from screening.photos import photo_groups, prepare_image
+from screening.commercial import is_commercial
 
 ROOT = Path(__file__).resolve().parent
 
@@ -136,7 +137,7 @@ def create_app(data_dir=None):
         return jsonify(r),201
 
     def save_corrected_inputs(r,new,reason="Inputs changed; approval and outputs invalidated",invalidate=True,persist=True):
-        query_keys=("address","postcode","property_type","bedrooms","uprn","building_attachment","new_build","tenure")
+        query_keys=("address","postcode","property_type","bedrooms","uprn","building_attachment","new_build","tenure","asset_class","floor_area_basis","unit_count","mixed_use")
         query_changed=any(new["property"].get(k)!=r["inputs"]["property"].get(k,defaults()["property"][k]) for k in query_keys)
         avm_keys=("floor_area_sqm","construction_date","finish_quality","outdoor_space","bathrooms","off_street_parking")
         avm_changed=any(new["property"][k]!=r["inputs"]["property"][k] for k in avm_keys)
@@ -147,7 +148,7 @@ def create_app(data_dir=None):
             # Imported selections must be explicitly reviewed for the new subject.
             for c in new["comparables"]: c["selected"]=False
         elif avm_changed:
-            for endpoint in ("valuation-sale","valuation-rent","build-cost"):
+            for endpoint in ("valuation-sale","valuation-rent","build-cost","valuation-commercial-sale","valuation-commercial-rent"):
                 r["evidence"].get("market",{}).pop(endpoint,None)
                 r["evidence"].get("raw",{}).pop(endpoint,None)
             r["evidence"]["sources"]=[s for s in r["evidence"].get("sources",[]) if not s["id"].startswith("valuation-") and s['id']!='build-cost']
@@ -241,9 +242,11 @@ def create_app(data_dir=None):
                         age=(datetime.now(timezone.utc)-datetime.fromisoformat(evidence.get('retrieved_at','').replace('Z','+00:00'))).days
                     except (ValueError,TypeError): age=999
                     pd_ready=bool(os.getenv('PROPERTYDATA_API_KEY'))
-                    needs_pd=pd_ready and (evidence.get('version',0)<4 or not any(s.get('id')=='rents' for s in evidence.get('sources',[])))
+                    rent_endpoint = 'rents-commercial' if is_commercial(r['inputs']) else 'rents'
+                    expected_class = 'commercial' if is_commercial(r['inputs']) else 'residential'
+                    needs_pd=pd_ready and (evidence.get('version',0)<4 or evidence.get('asset_class', 'residential') != expected_class or not any(s.get('id')==rent_endpoint for s in evidence.get('sources',[])))
                     if not evidence or b.get('refresh_evidence') is True or age>=60 or needs_pd:
-                        progress('Researching the property and HM Land Registry records')
+                        progress('Researching commercial property evidence' if is_commercial(r['inputs']) else 'Researching the property and HM Land Registry records')
                         r['evidence']=gather(r['inputs'],progress,include_profile=b.get('include_profile',True) is True,public_only=not pd_ready,
                                              cache_dir=store.root/'.research-cache',refresh_cache=b.get('refresh_evidence') is True)
                         r['mode']='live'
@@ -320,13 +323,13 @@ def create_app(data_dir=None):
                     field=change['section']+'.'+change['key']
                     revised['inputs']['input_provenance'][field]={'basis':'Analyst supplied via AI edit; unverified','recorded_at':now()}
                 revised['presentation']=presentation
-                query_keys=('address','postcode','property_type','bedrooms','uprn','building_attachment','new_build','tenure')
+                query_keys=('address','postcode','property_type','bedrooms','uprn','building_attachment','new_build','tenure','asset_class','floor_area_basis','unit_count','mixed_use')
                 if any(inputs['property'].get(k)!=original['inputs']['property'].get(k,defaults()['property'][k]) for k in query_keys):
                     revised['evidence']={}
                     clear_profile_inputs(revised['inputs'],original['inputs'])
                     for c in revised['inputs']['comparables']:c['selected']=False
                 elif any(inputs['property'][k]!=original['inputs']['property'][k] for k in ('floor_area_sqm','construction_date','finish_quality','outdoor_space','bathrooms','off_street_parking')):
-                    for endpoint in ('valuation-sale','valuation-rent','build-cost'):
+                    for endpoint in ('valuation-sale','valuation-rent','build-cost','valuation-commercial-sale','valuation-commercial-rent'):
                         revised['evidence'].get('market',{}).pop(endpoint,None)
                         revised['evidence'].get('raw',{}).pop(endpoint,None)
                     revised['evidence']['sources']=[s for s in revised['evidence'].get('sources',[]) if not s['id'].startswith('valuation-') and s['id']!='build-cost']

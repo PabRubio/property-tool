@@ -4,6 +4,7 @@ from .comparisons import comparison_summary
 from .evidence import valuation, local_growth
 from .market_evidence import property_context, sample_context, demand_context, growth_check, regional_rent_growth, annualised
 from .modelling import works_value
+from .commercial import is_commercial, purchase_vat, missing_terms, flags as commercial_flags
 
 
 def partial_analysis(inputs, evidence, a, basis, strategy, price, rent, price_basis, rent_basis, missing):
@@ -27,14 +28,16 @@ def partial_analysis(inputs, evidence, a, basis, strategy, price, rent, price_ba
     a['refurbishment'] = works
     refurb = works*(1+a['contingency_pct']/100) if works is not None else None
     sdlt = stamp_duty(price,a) if price is not None else {'total':None,'basis':'Purchase price unavailable','rules':{},'bands':[]}
-    acquisition = sdlt['total']+a['legal_fees']+a['survey_fees']+a['other_purchase_costs']+a['safety_upfront'] if price is not None else None
+    vat = purchase_vat(price, a) if price is not None else 0
+    recovery = vat * a.get('purchase_vat_recoverable_pct', 0) / 100
+    acquisition = sdlt['total']+a['legal_fees']+a['survey_fees']+a['other_purchase_costs']+a['safety_upfront']+vat-recovery if price is not None else None
     cost = price+acquisition+refurb if price is not None and refurb is not None else None
     loan = None
     if a['financing']=='cash': loan=0
     elif 'financing' not in missing and 'mortgage_amount' not in missing:
         loan = borrowing(a,price) if price is not None else a.get('mortgage_amount')
     debt = payment(loan,a['interest_rate_pct'],a['mortgage_term_years']*12,a['financing']) if loan is not None else None
-    cash = cost-loan+a['mortgage_fees']+a['cash_reserve'] if cost is not None and loan is not None else None
+    cash = cost+recovery-loan+a['mortgage_fees']+a['cash_reserve'] if cost is not None and loan is not None else None
     noi = None
     if rent is not None and 'maintenance_value' not in missing:
         # Operating income requires the chosen repair basis, but not borrowing.
@@ -99,4 +102,20 @@ def partial_analysis(inputs, evidence, a, basis, strategy, price, rent, price_ba
         model['horizons'].append({'years':years,'available':False,'reason':'Incomplete inputs: '+', '.join(missing),
                                  'rental_income':rental_income,'rental_cashflow':None,
                                  'exit':{'sale_price':future,'sale_proceeds':proceeds,'annual_irr_pct':None,'total_profit':None}})
+    if is_commercial(inputs):
+        model['asset_class'] = 'commercial'
+        model['flags'] = commercial_flags(inputs, a) + model['flags']
+        model['rent_growth_basis'] = 'Supplied commercial lease events only; no residential inflation'
+        if missing_terms(inputs, a):
+            for key in ('stabilised_noi', 'monthly_cashflow_before_tax', 'net_yield_on_cost_pct', 'cash_on_cash_pct'):
+                model['metrics'][key] = None
+            for test in model['tests']: test.update(actual=None, passes=None)
+            for horizon in model['horizons']:
+                horizon['rental_income'] = None
+                horizon['exit']['sale_proceeds'] = None
+            if a.get('purchase_vat_pct') is None or 'sdlt_override' in missing:
+                model['sdlt'] = {'total': None, 'basis': 'Purchase VAT / adviser-confirmed lease tax unavailable', 'bands': [], 'rules': {}}
+                for key in ('total_property_cost', 'acquisition_costs', 'cash_required'):
+                    model['metrics'][key] = None
+                model['funding'].update(cash_required=None, initial_shortfall=None)
     return model

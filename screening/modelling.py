@@ -7,6 +7,8 @@ def effective_defaults(inputs):
     a = dict(defaults()['assumptions'], **inputs['assumptions'])
     provenance = inputs.get('input_provenance', {})
     basis = {key: provenance.get('assumptions.'+key, {}).get('basis', 'Supplied / saved input; unverified') for key in a}
+    from .commercial import is_commercial, assumptions
+    if is_commercial(inputs): return assumptions(inputs, a, basis)
     notes = ' '.join([inputs['investor'].get('notes', ''), inputs['property'].get('listing_notes', ''),
                       inputs.get('analyst_notes', ''), a.get('rent_source', '')]).lower()
     # Bedroom count alone says nothing about the tenancy arrangement. Questions,

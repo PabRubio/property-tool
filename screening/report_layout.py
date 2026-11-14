@@ -16,6 +16,7 @@ from .photos import photo_groups
 from .providers import now
 from . import branding
 from .source_report import CitationIndex
+from .commercial import is_commercial
 from .report_visuals import (Stack, Columns, ResponsiveTable, Cover, Chart, numeric_cell,
                              PAPER, GREEN, GOLD, MUTED, PHOTO, RED)
 
@@ -101,7 +102,8 @@ class Layout:
             mapping=[('Bedroom','beds'),('Property type','type'),('Distance','location'),('Floor area','size'),('Tenure','tenure'),
                      ('New-build','new-build'),('listing is','date'),('Sale outside','date'),('Whole-property','rent basis'),('No source','source'),('Subject property','subject itself')]
             return ', '.join(dict.fromkeys(next((label for token,label in mapping if token in reason),'verify') for reason in row.get('limitations',[]))) or 'Review condition / terms'
-        result=[['Address / source','Price' if kind!='rent' else 'Rent / mo.','Beds','m² / mi.','Sale date' if kind=='sold' else 'Observed on','Differences / basis']]
+        commercial=is_commercial(self.record['inputs'])
+        result=[['Address / source','Price' if kind!='rent' else 'Rent / mo.','Area basis' if commercial else 'Beds','m² / mi.','Sale date' if kind=='sold' else 'Observed on','Differences / basis']]
         for row in rows[:5]:
             refs=list(row.get('source_ids') or [row.get('source_id') or 'inputs'])
             for url in row.get('evidence_urls') or [row.get('source_url')]:
@@ -109,11 +111,11 @@ class Layout:
             address=[self.linked(row['address'],maps_url(row['address'])),self.paragraph('['+', '.join(refs)+']',7.5,kind=None,space=0)]
             import re
             if not re.search(r'\d',row['address'].split(',')[0]) and not row.get('full_address'):
-                address.append(self.paragraph('House number unavailable',7.5,kind=None,space=0))
+                address.append(self.paragraph('Unit number unavailable' if commercial else 'House number unavailable',7.5,kind=None,space=0))
             stamp=str(row.get('date') if kind=='sold' else row.get('observed_at') or row.get('date') or '')[:10]
-            result.append([address,gbp(row['amount']).replace('.00',''),val(row.get('bedrooms')),
+            result.append([address,gbp(row['amount']).replace('.00',''),str(row.get('floor_area_basis') or 'Unknown').upper() if commercial else val(row.get('bedrooms')),
                            val(row.get('floor_area_sqm'),1)+' / '+val(row.get('distance'),2),stamp or 'Unknown',
-                           (rent_basis(row)+'; ' if kind=='rent' else '')+str(row.get('property_type') or 'Type unknown').replace('_',' ')+'; '+limitations(row)])
+                           ((str(row.get('lease_terms') or 'Lease terms unknown')+'; ') if commercial else (rent_basis(row)+'; ' if kind=='rent' else ''))+str(row.get('property_type') or 'Type unknown').replace('_',' ')+'; '+limitations(row)])
         # Table supports a small stack of paragraphs inside a cell.
         cells=[]
         for row in result:
@@ -187,6 +189,7 @@ def render_report(record,path,folder,editor,final,cashflow=None,as_of=None):
     from .internal_review import investigative
     m=record['analysis'];v=m['metrics'];a=m['effective_assumptions'];p=m.get('effective_property',record['inputs']['property'])
     e=record['evidence'];n=record['narrative']['content'];investor=record['inputs']['investor'];L=Layout(record,editor,as_of);W=L.width
+    commercial=is_commercial(record['inputs'])
     pages=[]
     def add(number,title,subtitle,build):
         editor.page=number
@@ -216,9 +219,11 @@ def render_report(record,path,folder,editor,final,cashflow=None,as_of=None):
     if a['other_purchase_costs']:purchase_parts.append((a['other_purchase_costs'],'other purchase fees'))
     if not no_refurbishment:purchase_parts.append((v['refurbishment_with_contingency'],'refurbishment including contingency'))
     purchase_parts.append((a['safety_upfront'],'upfront safety provision'))
+    if commercial: purchase_parts.append(((v.get('purchase_vat') or 0)-(v.get('recoverable_purchase_vat') or 0),'irrecoverable purchase VAT'))
     purchase_explanation=breakdown(v['total_property_cost'],purchase_parts) if v['total_property_cost'] is not None else 'Total purchase cost unavailable until the missing price / works budget is supplied.'
     if no_refurbishment:purchase_explanation+=' No refurbishment has been selected for this property'
     cash_parts=[(v['purchase_price']-v['loan'] if v['purchase_price'] is not None and v['loan'] is not None else None,'towards the purchase price'),(v['acquisition_costs'],'purchase taxes and fees')]
+    if commercial and v.get('recoverable_purchase_vat'):cash_parts.append((v['recoverable_purchase_vat'],'recoverable VAT funded upfront'))
     if v['refurbishment_with_contingency']:cash_parts.append((v['refurbishment_with_contingency'],'refurbishment including contingency'))
     if a['mortgage_fees']:cash_parts.append((a['mortgage_fees'],'finance fees'))
     if a['cash_reserve']:cash_parts.append((a['cash_reserve'],'cash reserve'))
@@ -249,13 +254,15 @@ def render_report(record,path,folder,editor,final,cashflow=None,as_of=None):
         details+='Bedrooms: '+str(p['bedrooms'])+' (supplied). [inputs] '
         details+=('Outdoor space: '+outdoor.replace('_',' ')+(' (supplied)' if outdoor_source=='inputs' else ' (cited research)')+'. ['+outdoor_source+'] ') if p.get('outdoor_space') else 'Outdoor space: Not supplied. '
         details+=('Living areas: '+room['text']+' ['+', '.join(room['source_ids'])+']') if room else 'Separate living-area count is not established.'
+        if commercial:
+            details='Use: '+p['property_type']+'; '+(p.get('use_class') or 'use class unconfirmed')+'. Area: '+size+' '+p.get('floor_area_basis','unknown').upper()+'. Occupancy: '+p.get('occupancy','unknown')+'. Tenant lease: '+(str(a['lease_remaining_months'])+' months' if a.get('lease_remaining_months') is not None else 'unconfirmed')+'. [inputs, assumptions]'
         price=gbp(p['asking_price'] if p['asking_price'] is not None else v['purchase_price'])
         price_basis=({'listed':'Supplied asking price','under_offer':'Supplied offer price','proposed':'Supplied proposed purchase price'}.get(p.get('price_status'),'Supplied listing / offer price') if p['asking_price'] is not None else m['price_basis'])
         if p.get('price_status')=='proposed':price_basis+='; modelling assumption, not a verified market valuation'
         prepared=L.paragraph('Prepared for '+(investor['name'] or 'Client')+' | Goal: '+(investor['goal'] or 'Not supplied'),8.25)
         address=L.linked(p['address']+', '+p['postcode'],maps_url(p['address']+', '+p['postcode']),21)
         left=[L.heading('Location and nearby amenities'),L.paragraph(loc,10)]
-        right=[L.heading('Size and accommodation'),L.paragraph(details,10)]
+        right=[L.heading('Use, size and occupancy' if commercial else 'Size and accommodation'),L.paragraph(details,10)]
         price_title=L.heading('Price and basis')
         price_text=L.paragraph(price+' — '+price_basis+'. [inputs, model]',10)
         # Keep the map link live while using the approved gold cover typography.
@@ -278,8 +285,9 @@ def render_report(record,path,folder,editor,final,cashflow=None,as_of=None):
                table([['Measure','Result and calculation'],['Gross rental yield',pct(v['gross_yield_pct'])+' — scheduled rent / purchase price'],
                       ['Net yield on cost',pct(v['net_yield_on_cost_pct'])+' — net operating income / acquisition cost'],
                       ['Cash-on-cash return',pct(v['cash_on_cash_pct'])+' — cash after debt / initial cash'],
-                      ['Sale valuation / rental valuation',gbp(m['valuations']['sale'])+' / '+gbp(m['valuations']['rent'])+' per month'],
-                      ['Annual price / rent / cost growth',pct(a['price_growth_pct'])+' / '+pct(a['rent_growth_pct'])+' / '+pct(a['cost_growth_pct'])]]),
+                      ['Capitalisation / annual rent reference' if commercial else 'Sale valuation / rental valuation',gbp(m['valuations']['sale'])+' / '+gbp(m['valuations']['rent']*12 if commercial and m['valuations']['rent'] is not None else m['valuations']['rent'])+(' per year' if commercial else ' per month')],
+                      ['Annual price / cost scenario; lease rent events' if commercial else 'Annual price / rent / cost growth',
+                       ('Price '+pct(a['price_growth_pct'])+'; costs '+pct(a['cost_growth_pct'])+'. Rent follows lease events.' if commercial else pct(a['price_growth_pct'])+' / '+pct(a['rent_growth_pct'])+' / '+pct(a['cost_growth_pct']))]]),
                table([['Ownership','Future property value','Net sale proceeds','Annualised return (IRR)']]+[
                    [str(h['years'])+' years',gbp(h.get('exit',{}).get('sale_price')),gbp(h.get('exit',{}).get('sale_proceeds')),pct(h.get('exit',{}).get('annual_irr_pct'))] for h in m['horizons']], [70,145,145,W-360]),
                L.paragraph('Starting value: '+gbp(m['starting_value'])+'. '+m['value_basis']+'. Sale proceeds deduct debt, selling fees and any supplied disposal-tax budget. [model]',8.5),
@@ -300,6 +308,8 @@ def render_report(record,path,folder,editor,final,cashflow=None,as_of=None):
                L.paragraph(cash_explanation+' [model, assumptions]',8.5),
                L.paragraph(purchase_explanation+' [model, assumptions]',8.5),
                L.paragraph('SDLT: '+m['sdlt']['basis']+'. Fees are budgets unless supported by quotes; the reserve is cash held aside. [tax-1, assumptions]',8.5)]
+        if commercial:
+            story[1:1]=[L.paragraph('Purchase VAT: '+gbp(v.get('purchase_vat'))+' funded in full at completion; recoverable share '+gbp(v.get('recoverable_purchase_vat'))+'. VAT recovery month: '+str(a.get('vat_recovery_month') or 'not supplied')+'. Net project cost excludes recoverable VAT. [model, assumptions, tax-vat]',8.5)]
         if ref.get('requested',True):story.append(L.paragraph('Refurbishment reference: '+gbp(ref['estimate'])+'. '+ref['basis']+'. '+ref['cost_basis']+'.',8.5))
         story += [L.heading('Purchase price and bidding guidance'),table([['Decision input','Result'],['Matched completed-sale range',span(guide['supported_purchase_range'])],
                   ['Price ceiling for net-yield target',gbp(guide['yield_price_ceiling'])],['Ceiling meeting all configured targets',gbp(guide['all_targets_price_ceiling'])],
@@ -315,7 +325,7 @@ def render_report(record,path,folder,editor,final,cashflow=None,as_of=None):
         story.append(table(basis_rows,[150,W-150],size=8,padding=2))
         cost_chart=L.chart('stacked','Purchase cost composition · '+gbp(v['total_property_cost']),
                            [{'purchase price':'Purchase','stamp duty':'Stamp duty','legal fees':'Legal','survey fees':'Survey',
-                             'upfront safety provision':'Safety','other purchase fees':'Other fees',
+                             'irrecoverable purchase VAT':'VAT','upfront safety provision':'Safety','other purchase fees':'Other fees',
                              'refurbishment including contingency':'Works'}.get(label,label) for value,label in purchase_parts],
                            [value for value,label in purchase_parts],102,
                            'Purchase price, tax and fees; the cash reserve is separate.')
@@ -333,6 +343,8 @@ def render_report(record,path,folder,editor,final,cashflow=None,as_of=None):
             monthly_rows.append([str(i)]+['—' if key=='tax_budget' and a['annual_tax_budget'] is None else '{:,.0f}'.format(row[key]) for key in keys])
         monthly_rows.append(['Total']+['—' if key=='tax_budget' and a['annual_tax_budget'] is None else '{:,.0f}'.format(sum(row[key] for row in m['monthly'][:12])) for key in keys])
         foot='*Income tax not modelled (—); cash left is BEFORE income tax.' if a['annual_tax_budget'] is None else '*Cash left deducts the supplied tax budget; it is not a tax assessment.'
+        if commercial:
+            foot+=' VAT recovery: '+gbp(v.get('recoverable_purchase_vat'))+' in month '+str(a.get('vat_recovery_month') or 'not supplied')+'; credited once in cash left. Business rates are included in running costs.'
         annual_chart=L.chart('cash',str(len(annual)).capitalize()+'-year annual cash-flow scenario' if len(annual)!=10 else 'Ten-year annual cash-flow scenario',
                              [str(row['year']) for row in annual],[row['cashflow_before_tax'] for row in annual],144,
                              'Before income tax; modelled figures, not a forecast.')
@@ -371,7 +383,7 @@ def render_report(record,path,folder,editor,final,cashflow=None,as_of=None):
         if v['loan']:
             coverage=m['interest_coverage']
             story += [L.heading('Interest-rate comparisons'),table([['Rate','Mortgage / month','Cash before tax / month']]+[[pct(s['rate_pct']),gbp(s['monthly_payment']),gbp(s['monthly_cashflow'])] for s in m['rate_comparisons']],[110,190,238],size=7.8),
-                      L.paragraph('Interest coverage: '+pct(coverage['base_pct'])+' initially; '+pct(coverage['stress_pct'])+' at '+pct(coverage['stress_rate_pct'])+'. Scheduled annual rent / annual interest. Lender-specific criteria require a broker check. [model, lender-icr]',8.5)]
+                      L.paragraph('Interest coverage: '+pct(coverage['base_pct'])+' initially; '+pct(coverage['stress_pct'])+' at '+pct(coverage['stress_rate_pct'])+'. Scheduled annual rent / annual interest. Lender-specific criteria require a broker check. '+('[model, assumptions]' if commercial else '[model, lender-icr]'),8.5)]
         rows=[['Ownership','Rent collected','Rental cash','Total profit']]
         for h in m['horizons']:
             rows.append([str(h['years'])+' years',gbp(h.get('rental_income')),gbp(h.get('rental_cashflow')),gbp(h.get('exit',{}).get('total_profit'))])
@@ -385,22 +397,34 @@ def render_report(record,path,folder,editor,final,cashflow=None,as_of=None):
 
     def property_page():
         profile=matched_profile(record);b=profile.get('building',{});context=m['property_context']
-        rows=[['Property fact','Recorded detail'],['Type / bedrooms / bathrooms',p['property_type'].replace('_',' ')+' / '+str(p['bedrooms'])+' / '+str(p.get('bathrooms') if p.get('bathrooms') is not None else 'Unknown')],
-              ['Floor area / EPC',str(p.get('floor_area_sqm') or 'Unknown')+' m² / '+str(p.get('epc_rating') or 'Unknown')],
-              ['Tenure / remaining lease',p['tenure']+' / '+('not applicable' if p['tenure']=='freehold' else str(p.get('lease_years') or 'Unknown')+' years')],
-              ['Construction / building safety',{'pre_1914':'Before 1914','1914_2000':'1914–2000','2000_onwards':'2000 onwards'}.get(p.get('construction_date'),'Unknown')+' / '+p['cladding_status'].replace('_',' ')]]
-        for fact in context['facts']:
-            value=fact['value'].replace('No — the matched PropertyData record reports the property outside this designation','No — outside, according to matched provider record')
-            rows.append([fact['label'],value+(' ['+fact['source_id']+']' if fact.get('source_id') else '')])
-        licence=e.get('researched_facts',{}).get('property.licensing_status')
-        rows.append(['Licensing / tenancy use',licence['text']+' ['+', '.join(licence['source_ids'])+']' if licence else 'Local licensing and permitted use unverified; licence fees and material remedial works are not priced. [assumptions]'])
-        room_layout=e.get('researched_facts',{}).get('property.room_layout')
-        floor=e.get('researched_facts',{}).get('property.floor_level')
-        if floor:rows.append(['Floor level',str(floor['value'])+' ['+', '.join(floor['source_ids'])+']'])
-        elif b.get('floor_level') is not None:rows.append(['Floor level',str(b['floor_level'])+' [property]'])
-        room_note='A total cannot identify the extra room without a floorplan.' if not room_layout else 'The sourced room layout is described below.'
-        story=[table(rows,[167,W-167],padding=3),L.paragraph('The profile reports '+str(b.get('habitable_rooms') or 'unknown')+' habitable rooms. This can include living/dining/study rooms as well as bedrooms; it excludes bathrooms and circulation space. '+room_note+' [property, room-definition]',8.5)]
-        if room_layout:story.append(L.paragraph(room_layout['text']+' ['+', '.join(room_layout['source_ids'])+']',8.5))
+        if commercial:
+            rows=[['Property fact','Recorded detail'],
+                  ['Type / use class',p['property_type']+' / '+(p.get('use_class') or 'Unconfirmed')],
+                  ['Floor area / measurement',str(p.get('floor_area_sqm') or 'Unknown')+' m² / '+p.get('floor_area_basis','unknown').upper()],
+                  ['Occupancy / non-domestic EPC',p.get('occupancy','unknown')+' / '+str(p.get('epc_rating') or 'Unknown')],
+                  ['Ownership tenure / lease',p['tenure']+' / '+('not applicable' if p['tenure']=='freehold' else str(p.get('lease_years') or 'Unknown')+' years')],
+                  ['Tenant lease remaining',str(a.get('lease_remaining_months'))+' months' if a.get('lease_remaining_months') is not None else 'Unconfirmed'],
+                  ['Repair / insurance responsibility',p.get('repair_responsibility','unknown')+' / '+p.get('insurance_responsibility','unknown')],
+                  ['Rent VAT status',p.get('rent_vat_status','unknown')]]
+            rows.extend([fact['label'],fact['value']+(' ['+fact['source_id']+']' if fact.get('source_id') else '')] for fact in context['facts'])
+            story=[table(rows,[167,W-167],padding=3),L.paragraph('Tenant lease terms are separate from the ownership lease. Confirm tenant covenant, permitted use, repairing and insurance obligations, access and non-domestic EPC. Supplied facts remain unverified. [inputs, assumptions]',8.5)]
+        else:
+            rows=[['Property fact','Recorded detail'],['Type / bedrooms / bathrooms',p['property_type'].replace('_',' ')+' / '+str(p['bedrooms'])+' / '+str(p.get('bathrooms') if p.get('bathrooms') is not None else 'Unknown')],
+                  ['Floor area / EPC',str(p.get('floor_area_sqm') or 'Unknown')+' m² / '+str(p.get('epc_rating') or 'Unknown')],
+                  ['Tenure / remaining lease',p['tenure']+' / '+('not applicable' if p['tenure']=='freehold' else str(p.get('lease_years') or 'Unknown')+' years')],
+                  ['Construction / building safety',{'pre_1914':'Before 1914','1914_2000':'1914–2000','2000_onwards':'2000 onwards'}.get(p.get('construction_date'),'Unknown')+' / '+p['cladding_status'].replace('_',' ')]]
+            for fact in context['facts']:
+                value=fact['value'].replace('No — the matched PropertyData record reports the property outside this designation','No — outside, according to matched provider record')
+                rows.append([fact['label'],value+(' ['+fact['source_id']+']' if fact.get('source_id') else '')])
+            licence=e.get('researched_facts',{}).get('property.licensing_status')
+            rows.append(['Licensing / tenancy use',licence['text']+' ['+', '.join(licence['source_ids'])+']' if licence else 'Local licensing and permitted use unverified; licence fees and material remedial works are not priced. [assumptions]'])
+            room_layout=e.get('researched_facts',{}).get('property.room_layout')
+            floor=e.get('researched_facts',{}).get('property.floor_level')
+            if floor:rows.append(['Floor level',str(floor['value'])+' ['+', '.join(floor['source_ids'])+']'])
+            elif b.get('floor_level') is not None:rows.append(['Floor level',str(b['floor_level'])+' [property]'])
+            room_note='A total cannot identify the extra room without a floorplan.' if not room_layout else 'The sourced room layout is described below.'
+            story=[table(rows,[167,W-167],padding=3),L.paragraph('The profile reports '+str(b.get('habitable_rooms') or 'unknown')+' habitable rooms. This can include living/dining/study rooms as well as bedrooms; it excludes bathrooms and circulation space. '+room_note+' [property, room-definition]',8.5)]
+            if room_layout:story.append(L.paragraph(room_layout['text']+' ['+', '.join(room_layout['source_ids'])+']',8.5))
         notes_count=len(story)
         if gallery or not final:
             photos=list(gallery) if final else list(gallery)+[None]*(10-len(gallery))
@@ -421,6 +445,22 @@ def render_report(record,path,folder,editor,final,cashflow=None,as_of=None):
     add(6,'Property facts and checks','Provider observations require a matched address; unresolved checks remain explicit.',property_page)
 
     def market():
+        if commercial:
+            sample=e.get('market',{}).get('rents-commercial',{})
+            rows=[['Quoting-rent context','Observed value'],
+                  ['Sample adverts',str(sample.get('points_analysed') or 'Unavailable')],
+                  ['Quoted annual rent / sq ft',gbp(sample.get('avg_quoting_rent_per_sqft'))+' / year'],
+                  ['Measurement basis',str(sample.get('unit_type') or 'Unconfirmed')],
+                  ['Area average annual total',gbp(sample.get('avg_quoting_rent'))]]
+            terms=[['Tenant lease scenario','Supplied terms'],['Annual / monthly rent',gbp(v.get('annual_rent'))+' / '+gbp(v['monthly_rent'])],
+                   ['Tenant lease remaining',str(a.get('lease_remaining_months'))+' months' if a.get('lease_remaining_months') is not None else 'Unconfirmed'],
+                   ['Earliest break month',str(a['break_month']) if a.get('break_month') is not None else 'Not supplied'],
+                   ['Contractual rent review',('Month '+str(a['rent_review_month'])+'; '+gbp(a.get('rent_review_annual_rent'))+' / year') if a.get('rent_review_month') is not None else 'Not supplied'],
+                   ['Rent-free / initial void',str(a.get('rent_free_months',0))+' / '+str(a.get('initial_void_months',0))+' months'],
+                   ['Explicit reletting',('After '+str(a['reletting_void_months'])+' months; '+gbp(a['reletting_annual_rent'])+' / year') if a.get('reletting_void_months') is not None and a.get('reletting_annual_rent') is not None else 'None supplied; rent stops at break / expiry']]
+            story=[L.heading('Quoting rents — annual area context'),table(rows),L.paragraph('Quoting rents describe advertised area stock, not the subject lease or achieved rent. Commercial rent and capitalisation estimates require compatible use, size and measurement basis; capitalisation is not completed-sale evidence. [rents-commercial, valuation-commercial-rent, valuation-commercial-sale]',8.5),
+                   L.heading('Tenant lease and reletting schedule'),table(terms),L.paragraph('The earliest supplied break is assumed exercised. Income stops at break or expiry unless both a reletting delay and annual rent are supplied. A contractual review is one priced step; no annual rent inflation is applied. Verify tenant covenant and actual lease terms. [assumptions, model]',8.5)]
+            return story
         history=property_history(record)
         rows=[['Subject sale date','Recorded price','Source']]+[[r['date'],gbp(r['amount']),L.linked('Recorded transaction',r.get('source_url'))] for r in history[:5]]
         story=[L.heading('This property’s sale history'),table(rows,[145,155,238]) if history else L.paragraph('No exact-match sale history established.')]
@@ -438,9 +478,20 @@ def render_report(record,path,folder,editor,final,cashflow=None,as_of=None):
         planning=m['property_context']['planning']
         if planning['requested']:story.append(L.paragraph('Nearby planning search: '+str(len(planning['rows']))+' records returned. This limited area search does not establish permission for the proposed works. [planning-applications]',8.5))
         return story
-    add(7,'Sale history and nearby market','The subject’s history, area activity and advertised asking prices are distinct evidence.',market)
+    add(7,'Commercial rents and tenant lease' if commercial else 'Sale history and nearby market','Quoting-rent context and contractual income scenarios.' if commercial else 'The subject’s history, area activity and advertised asking prices are distinct evidence.',market)
 
     def comparisons():
+        if commercial:
+            rent=m['rental_evidence'];sold=m['sales_evidence']
+            asking=comparison_summary(record['inputs'],e,'asking',L.today)['candidates']
+            story=[L.paragraph('Subject rent: '+gbp(v.get('annual_rent'))+' / year; '+gbp(v['monthly_rent'])+' / month, excluding pass-through VAT. '+m['rent_basis']+'. [inputs, assumptions, model]',8.5),
+                   L.heading('Advertised unit rents — monthly equivalent'),L.comparisons(rent['candidates'],'rent') if rent['candidates'] else L.paragraph('No usable commercial rental comparisons established.'),
+                   L.paragraph('Match subtype, NIA/GIA basis, size, location, lease terms and VAT basis. Quoted rents are not achieved rents; per-square-foot quotations are not total unit rent. Unknown lease terms remain unknown. [assumptions]',8.5),
+                   *([] if investigative(n['rent_conclusion']) else [L.prose(n['rent_conclusion'])]),
+                   L.heading('Commercial asking prices'),L.comparisons(asking,'asking') if asking else L.paragraph('No usable commercial asking-price comparisons established.'),
+                   L.heading('Completed commercial sales'),L.comparisons(sold['candidates'],'sold') if sold['candidates'] else L.paragraph('No compatible completed commercial sales established.'),
+                   L.paragraph('Capitalised quoting-rent estimates are indicative references, not completed-sale evidence. Review tenant covenant, lease duration, breaks, repairing obligations and vacant-possession assumptions before relying on values. [valuation-commercial-sale, assumptions]',8.5)]
+            return story
         sample=m['market_context']['rent_sample'];bounds=sample['range_80'];rent=m['rental_evidence'];sold=m['sales_evidence']
         detail='Rent used: '+gbp(v['monthly_rent'])+'/month. '+m['rent_basis']+'. '
         if sample['count'] is not None:
@@ -498,15 +549,17 @@ def render_report(record,path,folder,editor,final,cashflow=None,as_of=None):
             'compliance':'Inspection/certificate budget; not proof of compliance.',
             'letting_fees':'Tenant-finding/renewal charges, separate from management.',
             'other_annual_costs':'Only the stated budget; no survey-based major-works estimate.',
-            'void_cost_monthly':'Vacancy-weighted council tax/utilities; lost rent is separate.'}
+            'void_cost_monthly':'Vacancy-weighted utilities and other empty-period bills; business rates and lost rent are separate.' if commercial else 'Vacancy-weighted council tax/utilities; lost rent is separate.',
+            'business_rates_annual':'Empty-property business rates budget; only supplied relief months apply. Eligibility is unconfirmed.'}
         rows=[['Cost / basis','Annual / monthly','What it covers']]
         for cost in m['operating_costs']:
             basis='Unknown; excluded' if cost['annual'] is None else 'Supplied; unverified' if any(word in cost['basis'].lower() for word in ('user / analyst','analyst supplied','supplied / saved')) else 'Assumption; confirm'
+            if commercial and 'unpriced' in cost['basis'].lower():basis='Unpriced; excluded'
             if cost['annual'] is not None and cost['basis'].startswith('Analyst estimate'):basis='Analyst estimate'
             if cost['annual'] is not None and cost['basis'].startswith('Fallback'):basis='Fallback; confirm'
             description=cost['includes'] if cost['key'] in ('management_pct','maintenance_pct') else scope[cost['key']]
             rows.append([cost['label']+'\n'+basis,('Unknown' if cost['annual'] is None else gbp(cost['annual'])+' / '+gbp(cost['monthly'])),description])
-        story=[table(rows,[139,116,W-255],size=8.2,padding=3),L.paragraph('Unknown budgets are excluded, not assumed free. Safety/compliance includes recurring gas/electrical checks and alarm provision; upfront safety is separate on page 3. Service-charge and works inclusions must be reconciled. [assumptions, safety-gov]',8.2),L.heading('Effective assumptions and basis')]
+        story=[table(rows,[139,116,W-255],size=8.2,padding=3),L.paragraph('Unknown commercial budgets are excluded, not assumed free. Confirm landlord costs during vacancy, tenant recoveries and irrecoverable VAT. Service-charge and works inclusions must be reconciled; rates relief uses only supplied months. [assumptions, tax-rates]' if commercial else 'Unknown budgets are excluded, not assumed free. Safety/compliance includes recurring gas/electrical checks and alarm provision; upfront safety is separate on page 3. Service-charge and works inclusions must be reconciled. [assumptions, safety-gov]',8.2),L.heading('Effective assumptions and basis')]
         defaults_rows=[['Model input','Effective value / basis']]
         for key,label in [('management_pct','Management incl. VAT'),('compliance','Recurring safety'),('safety_upfront','Upfront safety'),('maintenance_pct','Maintenance'),('void_pct','Vacancy'),('cost_growth_pct','Annual cost growth')]:
             value=pct(a[key]) if key.endswith('_pct') else gbp(a[key])
@@ -519,7 +572,7 @@ def render_report(record,path,folder,editor,final,cashflow=None,as_of=None):
         labels={'management_pct':'Management','maintenance_pct':'Maintenance','insurance':'Insurance','compliance':'Safety',
                 'letting_fees':'Letting / renewal','void_cost_monthly':'Empty-period bills','regular_cleaning':'Regular cleaning',
                 'turnover_cleaning':'Tenancy cleaning','service_charge':'Service charge','ground_rent':'Ground rent',
-                'other_annual_costs':'Other costs'}
+                'other_annual_costs':'Other costs','business_rates_annual':'Business rates'}
         known=[cost for cost in m['operating_costs'] if cost['annual'] is not None and cost['annual']>0]
         chart=L.chart('costs','Known annual running-cost budgets',[labels[cost['key']] for cost in known],
                       [cost['annual'] for cost in known],115,'Bars start at zero. Unknown budgets are excluded; £0 major works is only the stated allowance.')

@@ -7,6 +7,7 @@ from datetime import date, datetime, timezone
 from .comparisons import comparison_summary, rent_basis
 from .evidence import address_key, enriched_inputs
 from .providers import now
+from .commercial import is_commercial
 
 
 def fingerprint(inputs, evidence):
@@ -35,8 +36,14 @@ def candidates(record):
                 continue
             if kind != 'sold' and not 0 <= (date.today() - observed).days <= 90:
                 continue
+            commercial = is_commercial(inputs)
+            if commercial and (row.get('property_type') != inputs['property']['property_type'] or
+                               row.get('floor_area_basis') != inputs['property'].get('floor_area_basis') or
+                               row.get('floor_area_basis') not in ('gia', 'nia')):
+                continue
+            expected_basis = 'commercial_unit_monthly' if commercial else 'whole_property_monthly'
             if kind == 'rent' and (rent_basis(row).startswith(('Per room', 'Student')) or
-                                   row.get('rental_basis') != 'whole_property_monthly' and row.get('source_id') != 'rents'):
+                                   row.get('rental_basis') != expected_basis and (commercial or row.get('source_id') != 'rents')):
                 continue
             subject = inputs['property']
             postcode = address_key(row.get('postcode') or '')
@@ -49,7 +56,7 @@ def candidates(record):
                 continue
             identity = {key: row.get(key) for key in ('kind', 'address', 'postcode', 'amount', 'date', 'observed_at',
                         'source_url', 'bedrooms', 'floor_area_sqm', 'property_type', 'tenure', 'distance',
-                        'rental_basis', 'notes', 'condition', 'finish_quality', 'transaction_class', 'evidence_quote')}
+                        'rental_basis', 'notes', 'condition', 'finish_quality', 'transaction_class', 'evidence_quote', 'floor_area_basis', 'lease_terms')}
             identity['source_ids'] = refs
             result.append(dict(row, id='candidate-' + hashlib.sha256(json.dumps(identity, sort_keys=True).encode()).hexdigest()[:12], source_ids=refs))
     return result

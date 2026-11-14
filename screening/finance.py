@@ -12,6 +12,7 @@ from .schema import api_property_type
 from .providers import numeric
 from .modelling import effective_defaults, works_value
 from .costs import effective as effective_costs, maintenance_monthly
+from .commercial import is_commercial, scoped_evidence, lease_month, purchase_vat, missing_terms, flags as commercial_flags
 
 ROOT = Path(__file__).resolve().parent.parent
 TAX = json.loads((ROOT / "config/tax_rules.json").read_text())
@@ -28,6 +29,21 @@ def ratio(n, d):
 def stamp_duty(price, a):
     if a.get("sdlt_override") is not None:
         return {"total": a["sdlt_override"], "basis": "Adviser-supplied override", "bands": [], "rules": TAX}
+    if a.get('_asset_class') == 'commercial':
+        consideration = price + purchase_vat(price, a)
+        lower, total, bands = 0, Decimal('0'), []
+        for upper, rate in TAX['nonresidential_bands']:
+            portion = max(0, min(consideration, upper if upper is not None else consideration) - lower)
+            tax = Decimal(str(portion)) * Decimal(str(rate))
+            if portion: bands.append({'portion': portion, 'rate_pct': rate * 100, 'tax': money(tax)})
+            total += tax
+            if upper is None or consideration <= upper: break
+            lower = upper
+        return {'total': money(total), 'basis': 'England non-residential bands on consideration including charged VAT',
+                'consideration': consideration, 'bands': bands,
+                'rules': {'jurisdiction': 'England', 'verified_on': TAX['commercial_verified_on'],
+                          'bands': TAX['nonresidential_bands'], 'sources': TAX['commercial_sources'],
+                          'scope': 'Single commercial property; new lease rent tax and complex transactions need an adviser override.'}}
     nonresident = TAX["nonresident_rate"] if a["nonresident"] and price >= TAX["additional_min_price"] else 0
     company = a["buyer_type"] == "company"
     if company and price > TAX["corporate_threshold"] and not a["corporate_relief_confirmed"]:
@@ -77,6 +93,7 @@ def irr(flows):
 
 
 def project(a, price, rent):
+    commercial = a.get('_asset_class') == 'commercial'
     loan = borrowing(a, price)
     debt_payment = payment(loan, a["interest_rate_pct"], a["mortgage_term_years"] * 12, a["financing"])
     first_payment = debt_payment
@@ -93,6 +110,9 @@ def project(a, price, rent):
         initial_empty = m < a["initial_void_months"]
         occupancy = 0 if initial_empty else 1 - a["void_pct"] / 100
         collected = scheduled * occupancy
+        rates_weight = 0
+        if commercial:
+            scheduled, collected, occupancy, rates_weight = lease_month(a, rent, m)
         factor = (1 + a["cost_growth_pct"] / 100) ** year
         # No extra annual cost inflation on percentage fees: rent growth already changes them.
         management = collected * a["management_pct"] / 100
@@ -102,7 +122,8 @@ def project(a, price, rent):
         turnover_cleaning = (a.get('turnover_cleaning') or 0) / 12 * factor
         fixed = sum(a.get(k) or 0 for k in ("service_charge", "ground_rent", "insurance", "compliance", "letting_fees", "other_annual_costs")) / 12 * factor + regular_cleaning + turnover_cleaning
         void_cost = a["void_cost_monthly"] * (1 - occupancy) * factor
-        operating = management + maintenance + fixed + void_cost
+        business_rates = (a.get('business_rates_annual') or 0) / 12 * rates_weight * factor if commercial else 0
+        operating = management + maintenance + fixed + void_cost + business_rates
         noi = collected - operating
         interest = balance * rate / 1200
         principal = min(balance, max(0, debt_payment - interest)) if a["financing"] == "repayment" else 0
@@ -110,7 +131,8 @@ def project(a, price, rent):
         balance = max(0, balance - principal)
         before_tax = noi - debt
         tax = (a["annual_tax_budget"] or 0) / 12
-        cash = before_tax - tax
+        vat_recovery = purchase_vat(price, a) * a.get('purchase_vat_recoverable_pct', 0) / 100 if commercial and m + 1 == a.get('vat_recovery_month') else 0
+        cash = before_tax - tax + vat_recovery
         cumulative += cash
         rows.append({"month": m + 1, "year": year + 1, "scheduled_rent": scheduled,
                      "interest_rate_pct": rate if loan else 0,
@@ -120,7 +142,8 @@ def project(a, price, rent):
                      "void_costs": void_cost, "operating_costs": operating, "net_operating_income": noi,
                      "interest": interest, "principal": principal, "debt_payment": debt,
                      "cashflow_before_tax": before_tax, "tax_budget": tax, "cashflow": cash,
-                     "loan_balance": balance, "cumulative_cashflow": cumulative})
+                     "loan_balance": balance, "cumulative_cashflow": cumulative,
+                     **({'business_rates': business_rates, 'vat_recovery': vat_recovery} if commercial else {})})
     return rows, loan, first_payment
 
 
@@ -144,11 +167,13 @@ def refurbishment_estimate(evidence):
 
 def analyse(inputs, evidence, mode, include_horizons=True):
     from .comparisons import comparison_summary
+    commercial = is_commercial(inputs)
+    evidence = scoped_evidence(inputs, evidence)
     hydrate_comparables(evidence)
     inputs = enriched_inputs(inputs, evidence)
     p, i = inputs["property"], inputs["investor"]
     a, modelling_basis, strategy = effective_defaults(inputs)
-    flags = []
+    flags = commercial_flags(inputs, a) if commercial else []
     def flag(level, title, detail):
         flags.append({"level": level, "title": title, "detail": detail})
     if inputs.get('enquiry', {}).get('kind') == 'area':
@@ -164,6 +189,11 @@ def analyse(inputs, evidence, mode, include_horizons=True):
         flag('warning', 'Mortgage term limits the ownership comparison', 'Periods beyond the supplied interest-only term are not modelled; refinancing terms are unknown.')
         a['holding_years'] = min(a['holding_years'], a['mortgage_term_years'])
     selected = [c for c in inputs["comparables"] if c["selected"]]
+    if commercial:
+        selected = [c for c in selected if c.get('property_type') == p['property_type']
+                    and c.get('floor_area_basis') in ('nia', 'gia')
+                    and c.get('floor_area_basis') == p.get('floor_area_basis')
+                    and (c['kind'] != 'rent' or c.get('rental_basis') == 'commercial_unit_monthly')]
     rental_comps = [c for c in selected if c["kind"] == "rent"]
     sold_comps = [c for c in selected if c["kind"] == "sold"]
     area_rent = evidence.get("market", {}).get("monthly_rent")
@@ -181,7 +211,8 @@ def analyse(inputs, evidence, mode, include_horizons=True):
     price_estimate = researched_estimate(inputs, evidence, 'sale') if a['purchase_price'] is None and p['asking_price'] is None else None
     if rent is None and rental_valuation:
         rent = rental_valuation
-        rent_basis = 'Property-specific rental valuation [valuation-rent]; modelled asking rent, not a confirmed tenancy'
+        rent_basis = ('Commercial rental estimate [valuation-commercial-rent]; annual quoting rent converted to monthly, not a confirmed tenancy' if commercial else
+                      'Property-specific rental valuation [valuation-rent]; modelled asking rent, not a confirmed tenancy')
         flag('warning', 'Rent is an automated estimate', 'Compare with matched listings or a letting-agent opinion before relying on it.')
     if rent is None and rental_evidence['median']:
         rent = rental_evidence['median']
@@ -201,7 +232,8 @@ def analyse(inputs, evidence, mode, include_horizons=True):
     price_basis = 'Client / analyst purchase price' if a['purchase_price'] is not None else 'Client-supplied listing / offer price'
     if price is None:
         price = sale_valuation
-        price_basis = 'Illustrative purchase at the automated sale valuation [valuation-sale]; no asking or agreed price supplied'
+        price_basis = ('Illustrative purchase at the commercial capitalisation estimate [valuation-commercial-sale]; no agreed price supplied' if commercial else
+                       'Illustrative purchase at the automated sale valuation [valuation-sale]; no asking or agreed price supplied')
         if price is None and sales_evidence['median']:
             price = sales_evidence['median']
             price_basis = 'Illustrative purchase at the median of matched completed-sale comparisons; no asking or agreed price supplied'
@@ -212,6 +244,7 @@ def analyse(inputs, evidence, mode, include_horizons=True):
     cost_value = sale_valuation or price
     effective_costs(inputs, evidence, a, modelling_basis, price, cost_value)
     missing = [key for key, value in [('monthly_rent', rent), ('purchase_price', price)] if value is None]
+    if commercial: missing.extend(missing_terms(inputs, a))
     if a['maintenance_basis']=='value' and a['_maintenance_value'] is None: missing.append('maintenance_value')
     if a['financing'] == 'unknown': missing.append('financing')
     if price and a.get('mortgage_amount') is not None and a['financing'] != 'cash' and a['mortgage_amount'] >= price: missing.append('mortgage_amount')
@@ -221,7 +254,7 @@ def analyse(inputs, evidence, mode, include_horizons=True):
         return partial_analysis(inputs, evidence, a, modelling_basis, strategy, price, rent, price_basis, rent_basis, missing)
     a["monthly_rent"], a["purchase_price"] = rent, price
     current_value = sale_valuation or price
-    value_basis = 'Property-specific sale valuation [valuation-sale]' if sale_valuation else 'Purchase price used as a proxy because no property-specific sale valuation is available'
+    value_basis = ('Commercial capitalisation estimate [valuation-commercial-sale]' if commercial else 'Property-specific sale valuation [valuation-sale]') if sale_valuation else 'Purchase price used as a proxy because no property-specific sale valuation is available'
     if price_estimate and not sale_valuation and price == price_estimate['estimate']:
         value_basis = estimate_basis(price_estimate)
     if sale_valuation and abs(price / sale_valuation - 1) > .15:
@@ -254,6 +287,11 @@ def analyse(inputs, evidence, mode, include_horizons=True):
         rent_growth_basis = regional_rent['reason']
         if regional_rent['rate'] is None:
             flag('warning', 'Rent-growth evidence unavailable', regional_rent['reason']+'. Cash flows use an explicit no-growth fallback until evidence or an analyst assumption is supplied.')
+    if commercial:
+        rent_growth_basis = 'Supplied contractual review and reletting events only; no annual residential rent inflation'
+        a['rent_growth_pct'] = 0
+        if not local_growth(evidence) and a['price_growth_pct'] == 0:
+            price_growth_basis = 'No commercial capital growth assumed; a supplied scenario may be used, never residential house-price history'
     no_refurbishment = a['refurb_level'] == 'none'
     reference_refurb = None if no_refurbishment else refurbishment_estimate(evidence)
     planned = not no_refurbishment
@@ -278,11 +316,13 @@ def analyse(inputs, evidence, mode, include_horizons=True):
         a["mortgage_fees"] = 0
     sdlt = stamp_duty(price, a)
     refurb = a["refurbishment"] * (1 + a["contingency_pct"] / 100)
-    acquisition = sdlt["total"] + a["legal_fees"] + a["survey_fees"] + a["other_purchase_costs"] + a['safety_upfront']
+    vat_paid = purchase_vat(price, a)
+    vat_recoverable = vat_paid * a.get('purchase_vat_recoverable_pct', 0) / 100
+    acquisition = sdlt["total"] + a["legal_fees"] + a["survey_fees"] + a["other_purchase_costs"] + a['safety_upfront'] + vat_paid - vat_recoverable
     project_cost = price + acquisition + refurb
     rows, loan, debt = project(a, price, rent)
     a['ltv_pct'] = loan/price*100 if loan else 0
-    cash_required = project_cost - loan + a["mortgage_fees"] + a["cash_reserve"]
+    cash_required = project_cost + vat_recoverable - loan + a["mortgage_fees"] + a["cash_reserve"]
     # Stabilised first-year prices, no initial refurbishment vacancy.
     stable_a = dict(a, initial_void_months=0, holding_years=1)
     stable, _, _ = project(stable_a, price, rent)
@@ -320,7 +360,9 @@ def analyse(inputs, evidence, mode, include_horizons=True):
                "rent_vs_area_pct": rent_gap, "selected_sold_median": sold_median,
                "price_vs_selected_sales_pct": ratio(price - sold_median, sold_median) if sold_median else None,
                "asking_price_per_sqft": money(p["asking_price"] / (p["floor_area_sqm"] * 10.7639104167)) if p["floor_area_sqm"] and p["asking_price"] else None,
-               "additional_cash_needed": money(additional_funding)}
+               "additional_cash_needed": money(additional_funding),
+               **({'purchase_vat': money(vat_paid), 'recoverable_purchase_vat': money(vat_recoverable),
+                   'annual_rent': money(rent * 12)} if commercial else {})}
     scenarios = []
     for label, rent_factor, rate_add, void_add, cost_factor in [
         ("Base", 1, 0, 0, 1), ("Lower rent", 1-a["rent_stress_pct"]/100, 0, 0, 1),
@@ -328,8 +370,10 @@ def analyse(inputs, evidence, mode, include_horizons=True):
         ("90% occupancy", 1, 0, 10-a["void_pct"], 1),
         ("Combined downside", 1-a["rent_stress_pct"]/100, a["rate_stress_pp"], 5, 1+a["cost_stress_pct"]/100)]:
         sa = dict(stable_a, interest_rate_pct=a["interest_rate_pct"]+rate_add, void_pct=min(100, a["void_pct"]+void_add))
+        if commercial: sa['_rent_scenario_factor'] = rent_factor
         for k in ("management_pct", "maintenance_pct", "insurance", "compliance", "letting_fees", "other_annual_costs", "void_cost_monthly", "service_charge", "ground_rent", "regular_cleaning", "turnover_cleaning"):
             sa[k] = (sa[k] or 0) * cost_factor
+        if commercial: sa['business_rates_annual'] = (sa.get('business_rates_annual') or 0) * cost_factor
         sr, _, _ = project(sa, price, rent * rent_factor)
         scenarios.append({"name": label, "monthly_rent": money(rent*rent_factor), "interest_rate_pct": sa["interest_rate_pct"] if loan else None,
                           "rent_change_pct": round((rent_factor-1)*100, 2), "rate_change_pp": rate_add if loan else 0,
@@ -337,9 +381,27 @@ def analyse(inputs, evidence, mode, include_horizons=True):
                           "void_pct": sa["void_pct"], "monthly_cashflow": money(sum(r["cashflow_before_tax"] for r in sr)/12)})
     value_maintenance = a.get('maintenance_basis')=='value'
     denom = (1-a["void_pct"]/100)*(1-a["management_pct"]/100)-(0 if value_maintenance else a["maintenance_pct"]/100)
-    fixed = stable[0]["fixed_costs"] + stable[0]["void_costs"]
+    fixed = stable[0]["fixed_costs"] + stable[0]["void_costs"] + stable[0].get('business_rates', 0)
     if value_maintenance: fixed += stable[0]['maintenance']
     metrics["break_even_rent"] = money((fixed+debt)/denom) if denom > 0 else None
+    if commercial:
+        # Solve the same baseline lease schedule. Only the initial rent varies;
+        # explicitly priced future reviews and reletting remain fixed.
+        def initial_rent_cashflow(candidate):
+            trial, _, _ = project(stable_a, price, candidate)
+            return sum(row['cashflow_before_tax'] for row in trial)
+        low, high = 0, 1000000
+        zero, maximum = initial_rent_cashflow(low), initial_rent_cashflow(high)
+        metrics['break_even_rent'] = None
+        if zero >= 0:
+            metrics['break_even_rent'] = 0
+        elif maximum >= 0 and maximum > zero:
+            for _ in range(45):
+                mid = (low + high) / 2
+                if initial_rent_cashflow(mid) >= 0: high = mid
+                else: low = mid
+            metrics['break_even_rent'] = money(high)
+        metrics['break_even_basis'] = 'Initial monthly rent needed for zero first-year baseline cash flow before income tax; supplied future review and reletting rents stay fixed. Unavailable when no finite solution is supported.'
     tests = [
         {"label": "Net yield on total cost", "target": a["min_net_yield_pct"], "actual": net_yield, "unit": "%", "passes": stable_noi / project_cost * 100 >= a["min_net_yield_pct"]},
         {"label": "Monthly cash flow before income tax", "target": a["min_monthly_cashflow"], "actual": metrics["monthly_cashflow_before_tax"], "unit": "GBP", "passes": stable_cash / 12 >= a["min_monthly_cashflow"]}]
@@ -355,7 +417,7 @@ def analyse(inputs, evidence, mode, include_horizons=True):
                 flag("critical", label + " is unknown", "Excluded from budget totals, not established as zero. Returns are conditional on the unpriced charges and major works.")
         if p["lease_years"] is None:
             flag("critical", "Lease length is unknown", "Obtain the remaining lease length and extension terms.")
-        elif p["lease_years"] < 85:
+        elif p["lease_years"] < 85 and not commercial:
             flag("warning", "Lease requires specialist review", "The remaining term may affect lender availability and extension costs; the model includes no extension quote.")
     elif a["service_charge"] is None:
         flag("warning", "Estate / service charges not confirmed", "Unpriced charges are excluded, not established as zero; returns remain conditional on any estate or management charges.")
@@ -376,7 +438,7 @@ def analyse(inputs, evidence, mode, include_horizons=True):
             flag("warning", "Comparable lacks a date or source link", c["address"])
         elif (date.today()-date.fromisoformat(c["date"])).days > (180 if c["kind"] == "rent" else 730):
             flag("warning", "Older comparable evidence", c["address"] + ": review market changes since the evidence date.")
-        if c["bedrooms"] is not None and c["bedrooms"] != p["bedrooms"]:
+        if not commercial and c["bedrooms"] is not None and c["bedrooms"] != p["bedrooms"]:
             flag("warning", "Comparable bedroom mismatch", c["address"] + ": explain the adjustment before relying on this comparison.")
     if rent_gap is not None and abs(rent_gap) > 15:
         flag("warning", "Selected rent differs materially from the area baseline", "The difference is %.1f%%. Record property-specific reasons for the gap." % rent_gap)
@@ -392,14 +454,15 @@ def analyse(inputs, evidence, mode, include_horizons=True):
             flag('warning', label+' budget unconfirmed', 'No landlord-paid annual budget supplied. Excluded from the calculation, not included in maintenance. Confirm responsibility, frequency and a quote; enter zero only if no landlord cost applies.')
     if a["new_lease"] and a["sdlt_override"] is None:
         flag("critical", "New lease tax needs review", "Lease-rent net present value is not included; supply an adviser-confirmed total purchase tax.")
-    if a["buyer_type"] == "company" and price > 500000:
+    if not commercial and a["buyer_type"] == "company" and price > 500000:
         flag("warning", "Company purchase relief and annual charges need review", "Confirm rental business relief conditions and any ATED filing / charge with an adviser.")
     if a["annual_tax_budget"] is None:
         flag("info", "Income tax is excluded", "Cash-flow headlines are before personal or company income tax. Enter an adviser-supplied annual tax budget to show a separate after-budget figure.")
     if a["sale_tax_budget"] is None:
         flag("info", "Tax on disposal is excluded", "Exit proceeds and projected return exclude capital gains / corporation tax on sale.")
-    if (date.today()-date.fromisoformat(TAX["verified_on"])).days > 90:
-        flag("warning", "Tax rules need refreshing", "The configured SDLT rules were last verified on " + TAX["verified_on"])
+    tax_checked = TAX['commercial_verified_on'] if commercial else TAX['verified_on']
+    if (date.today()-date.fromisoformat(tax_checked)).days > 90:
+        flag("warning", "Tax rules need refreshing", "The configured SDLT rules were last verified on " + tax_checked)
     if scenarios[-1]["monthly_cashflow"] < 0:
         flag("warning", "Combined downside loses cash", "The lower-rent, higher-cost and higher-interest scenario requires additional funding.")
     if additional_funding > 0:
@@ -454,6 +517,11 @@ def analyse(inputs, evidence, mode, include_horizons=True):
                 "Targets and cost defaults are editable screening assumptions, not industry standards. Sold comparison uses selected unadjusted transaction prices and requires an analyst to assess size, age, condition and location.",
                 "Income and sale taxes use optional adviser-supplied amounts only. Annual IRR assumes year-end cash flows and is unavailable for ambiguous cash-flow patterns. Projections and stress scenarios are assumptions, not forecasts."
             ]}
+
+    if commercial:
+        model['asset_class'] = 'commercial'
+        model['methodology'][2] = 'Commercial projections follow supplied lease dates, the earliest break, rent-free months and priced review. Rent stops at break/expiry unless an explicit reletting scenario is supplied. Empty-property business rates use the supplied budget and confirmed relief months.'
+        model['methodology'][4] = 'Rent excludes pass-through VAT. Operating budgets include irrecoverable VAT. Purchase cost includes irrecoverable purchase VAT; initial funding also includes the recoverable share, credited once in the supplied recovery month. The cash buffer is returned at exit.'
 
     if include_horizons:
         from .decision import purchase_guidance, operating_costs

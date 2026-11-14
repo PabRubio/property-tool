@@ -88,6 +88,7 @@ def enriched_inputs(inputs, evidence):
     choices = {'construction_date': ('pre_1914','1914_2000','2000_onwards'), 'epc_rating': tuple('ABCDEFG'),
                'tenure': ('freehold','leasehold'), 'finish_quality': ('very_high','high','average','below_average','unmodernised'),
                'outdoor_space': ('none','balcony_terrace','garden','garden_very_large')}
+    if out['property'].get('asset_class') == 'commercial': choices['floor_area_basis'] = ('gia', 'nia')
     ranges = {'floor_area_sqm': (1,10000), 'bathrooms': (0,5), 'off_street_parking': (0,3), 'lease_years': (0,999)}
     for path, fact in evidence.get('researched_facts', {}).items():
         if not path.startswith('property.'): continue
@@ -236,6 +237,11 @@ def ranked_comparables(record, kind):
 
 def valuation(evidence, kind):
     """Only use numeric provider values with explicit units for rents."""
+    if evidence.get('asset_class') == 'commercial':
+        d = evidence.get('market', {}).get('valuation-commercial-' + kind, {})
+        if not isinstance(d, dict): return None
+        value = numeric(d.get('estimate_annual' if kind == 'rent' else 'estimate'))
+        return round(value / 12 if kind == 'rent' else value, 2) if value and value > 0 else None
     d = evidence.get('market', {}).get('valuation-'+kind, {})
     if not isinstance(d, dict): return None
     estimate = numeric(d.get('estimate'))
@@ -260,8 +266,9 @@ def clear_profile_inputs(new, old):
 def invalidate_size_evidence(evidence):
     """Size-filtered samples cannot be reused after an area correction."""
     evidence.pop('estimates', None)
-    endpoints = ('prices-per-sqf', 'sold-prices-per-sqf')
+    endpoints = ('prices-per-sqf', 'sold-prices-per-sqf', 'valuation-commercial-rent', 'valuation-commercial-sale')
     for endpoint in endpoints: evidence.get('raw', {}).pop(endpoint, None)
+    for endpoint in endpoints: evidence.get('market', {}).pop(endpoint, None)
     for key in ('asking_price_per_sqft', 'sold_price_per_sqft'): evidence.get('market', {}).pop(key, None)
     evidence['sources'] = [s for s in evidence.get('sources', []) if s['id'] not in endpoints]
     evidence['comparables'] = [c for c in evidence.get('comparables', []) if c.get('source_id') not in endpoints]

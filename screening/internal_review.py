@@ -3,6 +3,7 @@ import re
 from .evidence import matched_profile
 from .photos import photo_groups
 from . import branding
+from .commercial import is_commercial
 
 
 def investigative(item):
@@ -22,7 +23,7 @@ def review_items(record):
         items.extend(item for item in values if investigative(item))
     b=matched_profile(record).get('building',{});p=record['inputs']['property']
     conflicts=[]
-    if b.get('estimated_bedrooms') is not None and b['estimated_bedrooms']!=p['bedrooms']:
+    if not is_commercial(record['inputs']) and b.get('estimated_bedrooms') is not None and b['estimated_bedrooms']!=p['bedrooms']:
         conflicts.append('bedrooms '+str(p['bedrooms'])+' supplied versus '+str(b['estimated_bedrooms'])+' estimated')
     if b.get('internal_area_sqf') and p.get('floor_area_sqm') and abs(float(b['internal_area_sqf'])/10.7639104167-p['floor_area_sqm'])>1:
         conflicts.append('area '+str(p['floor_area_sqm'])+' m² supplied versus '+str(b['internal_area_sqf'])+' sq ft in the profile')
@@ -32,7 +33,9 @@ def review_items(record):
         items.append({'text':'Resolve missing '+gap.replace('_',' ')+'. Dependent figures remain unavailable.','source_ids':['assumptions']})
     cover,gallery=photo_groups(record)
     if not cover:items.append({'text':'Add a subject-property photograph before delivery. Confirm permission to use all uploaded photographs.','source_ids':['inputs']})
-    items.append({'text':'Confirm fire precautions, inspection schedules and local licensing; reconcile safety work with refurbishment, service charges and existing cost allowances. Obtain quotes for unknown cleaning and property charges.','source_ids':['assumptions','safety-gov']})
+    if is_commercial(record['inputs']):
+        items.append({'text':'Verify tenant covenant, actual tenant lease and ownership lease separately; confirm breaks, reviews, rent-free periods, permitted use, non-domestic EPC, repair and insurance obligations, VAT recovery and empty-property business rates. Obtain commercial landlord budgets and reconcile recoverable charges.','source_ids':['inputs','assumptions','tax-vat','tax-rates']})
+    else: items.append({'text':'Confirm fire precautions, inspection schedules and local licensing; reconcile safety work with refurbishment, service charges and existing cost allowances. Obtain quotes for unknown cleaning and property charges.','source_ids':['assumptions','safety-gov']})
     if record.get('evidence',{}).get('errors'):
         items.append({'text':'Review unresolved / failed evidence requests in the saved JSON research log. Do not treat missing results as cleared checks.','source_ids':['inputs']})
     seen=set();result=[]

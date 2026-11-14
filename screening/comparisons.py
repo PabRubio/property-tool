@@ -6,6 +6,7 @@ from datetime import date
 from statistics import median
 from .schema import api_property_type
 from .evidence import address_key
+from .commercial import is_commercial
 
 
 def full_address(row):
@@ -27,6 +28,7 @@ def maps_url(address):
 def rent_basis(row):
     basis = row.get('rental_basis') or ''
     text = (basis+' '+row.get('notes','')+' '+row.get('address','')).lower()
+    if basis == 'commercial_unit_monthly': return 'Commercial unit / month, excluding VAT'
     if re.search(r'per.room|per person|pppw|ppw|room.only',text): return 'Per room; not whole-house'
     if basis == 'whole_property_monthly': return 'Whole-house / month'
     if re.search(r'\bstudent|\bhmo',text): return 'Student/shared; basis unverified'
@@ -50,7 +52,15 @@ def assess(row, property_, kind, today=None):
     today = today or date.today()
     reasons = []
     if not row.get('source_url'): reasons.append('No source link')
-    if row.get('bedrooms') != property_['bedrooms']: reasons.append('Bedroom count differs or is unknown')
+    commercial = property_.get('asset_class') == 'commercial'
+    if not commercial and row.get('bedrooms') != property_['bedrooms']: reasons.append('Bedroom count differs or is unknown')
+    if commercial:
+        if property_.get('floor_area_basis') not in ('gia', 'nia') or row.get('floor_area_basis') != property_.get('floor_area_basis'):
+            reasons.append('Floor area measurement differs or is unverified')
+        area, subject = row.get('floor_area_sqm'), property_.get('floor_area_sqm')
+        if not area or not subject or not .75 <= area / subject <= 1.25: reasons.append('Floor area differs or is unverified')
+        if not row.get('lease_terms'): reasons.append('Commercial lease terms unverified')
+        if kind == 'rent' and row.get('rental_basis') != 'commercial_unit_monthly': reasons.append('Commercial monthly rent excluding VAT not established')
     if row.get('property_type') != api_property_type(property_): reasons.append('Property type differs or is unknown')
     same_postcode = address_key(row.get('postcode') or '') == address_key(property_['postcode'])
     if row.get('distance') is None and not same_postcode or row.get('distance') is not None and not 0 < row['distance'] <= 1: reasons.append('Distance unverified or beyond one mile')
@@ -68,7 +78,7 @@ def assess(row, property_, kind, today=None):
         if not 0 <= age <= 90: reasons.append(('Rental' if kind == 'rent' else 'For-sale')+' listing is undated or over 90 days old')
         # PD's monthly sample is a whole-property asking-rent dataset. Web evidence
         # must explicitly establish this: per-room student/HMO adverts cannot substitute.
-        if kind == 'rent' and (rent_basis(row).startswith(('Per room','Student')) or row.get('source_id', '').startswith('research-') and row.get('rental_basis') != 'whole_property_monthly'):
+        if not commercial and kind == 'rent' and (rent_basis(row).startswith(('Per room','Student')) or row.get('source_id', '').startswith('research-') and row.get('rental_basis') != 'whole_property_monthly'):
             reasons.append('Whole-property monthly rent not established')
         area, subject = row.get('floor_area_sqm'), property_.get('floor_area_sqm')
         if area and subject and not .75 <= area / subject <= 1.25: reasons.append('Floor area differs materially')
@@ -109,7 +119,7 @@ def comparison_summary(inputs, evidence, kind, today=None):
         try: recency = date.fromisoformat(str(row.get('date') if kind=='sold' else row.get('observed_at') or '')[:10]).toordinal()
         except ValueError: recency = 0
         beds=row.get('bedrooms');subject_beds=inputs['property']['bedrooms']
-        bed_gap=abs(beds-subject_beds) if beds is not None else 99
+        bed_gap=0 if is_commercial(inputs) else abs(beds-subject_beds) if beds is not None else 99
         type_gap=0 if row.get('property_type')==api_property_type(inputs['property']) else 1
         condition=row.get('condition') or row.get('finish_quality')
         condition_gap=0 if condition and condition==inputs['property'].get('finish_quality') else 1 if not condition else 2
@@ -121,5 +131,6 @@ def comparison_summary(inputs, evidence, kind, today=None):
     return {'kind': kind, 'candidates': rows, 'matched': matched, 'count': len(matched),
             'range': [min(values), max(values)] if enough else None,
             'median': median(values) if enough else None,
-            'basis': 'Unadjusted range and median of at least three distinct, dated, type/bedroom/location-compatible '+({'sold':'sales within 18 months, with matching tenure and size.', 'rent':'whole-property asking rents observed within 90 days; not achieved rents. Condition and letting terms still require review.', 'asking':'asking-price listings observed within 90 days; not completed sale prices. Condition, size and terms still require review.'}[kind]),
+            'basis': ('Unadjusted commercial comparisons matched by subtype, location, size and measurement basis, with stated lease terms. Rents are monthly and exclude VAT; advertised rents are not achieved.' if is_commercial(inputs) else
+                      'Unadjusted range and median of at least three distinct, dated, type/bedroom/location-compatible '+({'sold':'sales within 18 months, with matching tenure and size.', 'rent':'whole-property asking rents observed within 90 days; not achieved rents. Condition and letting terms still require review.', 'asking':'asking-price listings observed within 90 days; not completed sale prices. Condition, size and terms still require review.'}[kind])),
             'reason': None if enough else 'Fewer than three sufficiently matched, independently sourced comparisons; no evidence-supported range established.'}

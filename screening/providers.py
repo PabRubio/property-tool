@@ -252,6 +252,11 @@ def gather(inputs, progress=lambda s: None, include_profile=True, public_only=Fa
                                          'params': dict(params), 'reason': reason})
         return pd_call(endpoint, params)
 
+    from .commercial import is_commercial
+    if is_commercial(inputs):
+        from .commercial_data import gather_market
+        return gather_market(inputs, evidence, paid, progress, public_only)
+
     national_source = {}
 
     def rental_inflation():

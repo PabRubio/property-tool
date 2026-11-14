@@ -8,6 +8,8 @@ from .codex_research import FINDING_WITH_QUOTE, ESTIMATE, grounded, observed_sou
 from .evidence import enriched_inputs, matched_profile, invalidate_size_evidence
 from .providers import now
 from .research import gaps, apply_findings, LABELS
+from .commercial import is_commercial
+from .codex_research import COMMERCIAL_INSTRUCTIONS
 
 SCHEMA = {'type':'object','properties':{
     'findings':{'type':'array','items':FINDING_WITH_QUOTE},
@@ -38,6 +40,8 @@ def topics(record):
     # Editing can recheck an existing fact as well as fill a gap.
     fields=('floor_area_sqm','bathrooms','construction_date','epc_rating','tenure','lease_years',
             'finish_quality','outdoor_space','off_street_parking','council_tax','floor_level','room_layout')
+    if is_commercial(record['inputs']):
+        fields=('floor_area_sqm','floor_area_basis','epc_rating','tenure','lease_years','use_class','business_rates','lease_terms')
     for topic in ['property.'+f for f in fields]+['constraint.'+f for f in LABELS]:
         result.setdefault(topic,{'id':topic,'label':topic,'group':'property','provider_result':'Existing fact; verify only if requested'})
     return list(result.values())
@@ -51,7 +55,7 @@ def context(record):
             'existing_findings':record['evidence'].get('research',{}).get('findings',[]),
             'researched_facts':record['evidence'].get('researched_facts',{}),
             'estimate_candidates':[r for kind in ('rent','sold','asking') for r in [x for x in rows if x['kind']==kind][:15]],
-            'cost_context':{'requested':[k for k in costs.KINDS if costs.defaulted(record['inputs'],k)],
+            'cost_context':{'requested':[] if is_commercial(record['inputs']) else [k for k in costs.KINDS if costs.defaulted(record['inputs'],k)],
                             'existing_estimates':costs.current(record['inputs'],record['evidence'])}}
 
 

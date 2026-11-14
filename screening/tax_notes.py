@@ -9,7 +9,23 @@ REFERENCES = [
     ('safety-gov','GOV.UK — landlord safety responsibilities','https://www.gov.uk/renting-out-a-property/landlord-responsibilities')]
 
 
+COMMERCIAL_VERIFIED_ON = '2026-11-12'
+COMMERCIAL_REFERENCES = [ref for ref in REFERENCES if ref[0] in ('tax-income','tax-company','tax-disposal')] + [
+    ('tax-nonresidential','HMRC — non-residential SDLT','https://www.gov.uk/stamp-duty-land-tax/nonresidential-and-mixed-rates'),
+    ('tax-vat','HMRC — land and property VAT Notice 742','https://www.gov.uk/guidance/vat-on-land-and-property-notice-742'),
+    ('tax-rates','GOV.UK — empty-property business rates relief','https://www.gov.uk/business-rates-relief/empty-property-relief')]
+
+
 def tax_explanation(a):
+    if a.get('_asset_class') == 'commercial':
+        ownership = ('Company rental profits and chargeable gains normally fall within Corporation Tax. [tax-company, tax-disposal] '
+                     if a['buyer_type'] == 'company' else
+                     'Individual rental profits are subject to Income Tax after allowable expenses; disposal gains may attract Capital Gains Tax. [tax-income, tax-disposal] ')
+        return (ownership + 'England non-residential SDLT includes charged purchase VAT in consideration; new-lease or complex tax requires adviser confirmation and an override. [tax-nonresidential] '
+                'Full purchase VAT is funded at completion. Only the supplied recoverable share is credited in the specified month; net project cost excludes that recovery. Rent excludes pass-through VAT; costs include irrecoverable VAT. Confirm the option to tax and recovery eligibility. [tax-vat] '
+                'Empty-property business rates use the supplied budget and relief months; eligibility is unverified. [tax-rates] '
+                'Income tax / Corporation Tax and disposal tax are excluded unless separately budgeted; budgets are not tax assessments. Government commercial guidance checked '+COMMERCIAL_VERIFIED_ON+'.')
+
     if a['buyer_type']=='company':
         text=('Company ownership: rental profits and chargeable gains normally fall within Corporation Tax. The main rate is 25%; '
               'qualifying small profits may use 19% or marginal relief, subject to thresholds, associated companies and eligibility. '

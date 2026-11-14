@@ -8,6 +8,9 @@
   "additional_min_price": 40000,
   "corporate_threshold": 500000,
   "corporate_flat_rate": 0.17,
+  "commercial_verified_on": "2026-11-12",
+  "nonresidential_bands": [[150000, 0], [250000, 0.02], [null, 0.05]],
+  "commercial_sources": ["https://www.gov.uk/stamp-duty-land-tax/nonresidential-and-mixed-rates", "https://www.gov.uk/guidance/stamp-duty-land-tax-the-amount-used-to-calculate-whats-payable"],
   "sources": [
     "https://www.gov.uk/stamp-duty-land-tax/residential-property-rates",
     "https://www.gov.uk/guidance/stamp-duty-land-tax-corporate-bodies",
